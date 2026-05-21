@@ -8,13 +8,13 @@ import {
   EyeOff,
   Maximize2,
   Minimize2,
-  Plus,
   Search,
   Trash2,
   X,
 } from "lucide-react";
 import { useStore } from "../../state/store";
 import { clipsMatchingGroup, sortClips } from "../../lib/beatFilter";
+import { SearchableMultiSelect } from "../SearchableMultiSelect";
 import { GroupSortMenu } from "./GroupSortMenu";
 import { fmtBytes, fmtDuration } from "../../lib/format";
 import { useHoverPreview } from "../../lib/useHoverPreview";
@@ -323,7 +323,7 @@ export function BeatEditor({ beatId, onClose }: Props) {
                   Pick any number per level. Within a level it's OR; across
                   levels it's AND.
                 </div>
-                <div className="space-y-3">
+                <div className="space-y-2">
                   {sortedLevels.map((l) => {
                     const values = Object.values(levelValues)
                       .filter((v) => v.levelId === l.id)
@@ -331,86 +331,32 @@ export function BeatEditor({ beatId, onClose }: Props) {
                     const selected = tags[l.id] ?? [];
                     return (
                       <div key={l.id}>
-                        <div className="flex items-baseline justify-between mb-1">
-                          <div className="text-[11px] text-ink-400 ml-1">
-                            {l.name}
-                          </div>
-                          {selected.length > 0 && (
-                            <button
-                              onClick={() =>
-                                setTags((t) => {
-                                  const n = { ...t };
-                                  delete n[l.id];
-                                  return n;
-                                })
-                              }
-                              className="text-[10px] text-ink-500 hover:text-ink-200"
-                            >
-                              Clear
-                            </button>
-                          )}
+                        <div className="text-[11px] text-ink-400 mb-0.5 ml-1">
+                          {l.name}
                         </div>
-                        <div className="flex flex-wrap gap-1">
-                          {values.map((v) => {
-                            const on = selected.includes(v.id);
-                            return (
-                              <button
-                                key={v.id}
-                                onClick={() =>
-                                  setTags((t) => {
-                                    const cur = t[l.id] ?? [];
-                                    const next = on
-                                      ? cur.filter((id) => id !== v.id)
-                                      : [...cur, v.id];
-                                    const out = { ...t };
-                                    if (next.length === 0) delete out[l.id];
-                                    else out[l.id] = next;
-                                    return out;
-                                  })
-                                }
-                                className={clsx(
-                                  "text-[11px] px-2 py-0.5 rounded-full border inline-flex items-center gap-1.5 transition",
-                                  on
-                                    ? "border-transparent"
-                                    : "border-ink-700 text-ink-300 hover:border-ink-600 hover:text-ink-100"
-                                )}
-                                style={
-                                  on
-                                    ? {
-                                        backgroundColor: `${v.color}33`,
-                                        color: v.color,
-                                        borderColor: `${v.color}66`,
-                                      }
-                                    : undefined
-                                }
-                              >
-                                <span
-                                  className="size-2 rounded-full shrink-0"
-                                  style={{ backgroundColor: v.color }}
-                                />
-                                {v.name}
-                              </button>
-                            );
-                          })}
-                          <button
-                            onClick={() => {
-                              const name = prompt(
-                                `New ${l.name.toLowerCase()} value`
-                              );
-                              if (!name?.trim()) return;
-                              const v = addValue(l.id, name.trim());
-                              setTags((t) => ({
-                                ...t,
-                                [l.id]: [...(t[l.id] ?? []), v.id],
-                              }));
-                            }}
-                            className="text-[11px] px-2 py-0.5 rounded-full border border-dashed border-ink-700 hover:border-accent-400 text-ink-400 hover:text-accent-300 inline-flex items-center gap-1 transition"
-                            title={`Add a new ${l.name.toLowerCase()} value`}
-                          >
-                            <Plus className="size-3" />
-                            {values.length === 0 ? "Add value" : ""}
-                          </button>
-                        </div>
+                        <SearchableMultiSelect
+                          values={selected}
+                          placeholder={`Any ${l.name.toLowerCase()}`}
+                          options={values.map((v) => ({
+                            id: v.id,
+                            label: v.name,
+                            color: v.color,
+                          }))}
+                          emptyLabel={`No ${l.name.toLowerCase()} values yet`}
+                          onCreate={(n) => {
+                            const v = addValue(l.id, n);
+                            return v.id;
+                          }}
+                          createLabel={`Create ${l.name.toLowerCase()}`}
+                          onChange={(vids) => {
+                            setTags((t) => {
+                              const next = { ...t };
+                              if (vids.length === 0) delete next[l.id];
+                              else next[l.id] = vids;
+                              return next;
+                            });
+                          }}
+                        />
                       </div>
                     );
                   })}

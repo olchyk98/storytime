@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
-import { Copy, Expand, Pencil, Plus, Workflow } from "lucide-react";
+import { Copy, Download, Expand, Pencil, Plus, Workflow } from "lucide-react";
 import { useStore } from "../../state/store";
-import type { BoardGroupNode, Clip } from "../../types";
+import { downloadBackup } from "../../lib/downloadBackup";
+import type { BoardGroupNode, Clip, Level, LevelValue } from "../../types";
 import { BeatEditor } from "./BeatEditor";
 import { clipsMatchingGroup, sortClips } from "../../lib/beatFilter";
 
@@ -38,14 +39,47 @@ function measureLabelWidth(label: string): number {
   return w;
 }
 
-function beatWidthFor(label: string | undefined) {
-  const labelWidth = measureLabelWidth(label ?? "");
+// Chip text renders at 10px medium. We can approximate from the 14px canvas
+// measure to avoid maintaining a second canvas.
+function chipWidth(name: string): number {
+  const textW = measureLabelWidth(name) * (10 / 14);
+  return Math.ceil(12 + textW); // 12px horizontal padding
+}
+
+function chipsRowWidth(
+  beat: BoardGroupNode,
+  levels: Record<string, Level>,
+  levelValues: Record<string, LevelValue>
+): number {
+  if (!beat.tags) return 0;
+  const names: string[] = [];
+  for (const [lid, vids] of Object.entries(beat.tags)) {
+    if (!levels[lid]) continue;
+    for (const vid of vids) {
+      const v = levelValues[vid];
+      if (v) names.push(v.name);
+    }
+  }
+  if (names.length === 0) return 0;
+  const chipsTotal = names.reduce((a, n) => a + chipWidth(n), 0);
+  const gaps = (names.length - 1) * 4;
+  const containerPadding = 24; // px-3 on the row
+  const countArea = 56; // count badge + breathing room on the right
+  return chipsTotal + gaps + containerPadding + countArea;
+}
+
+function beatWidthFor(
+  beat: BoardGroupNode,
+  levels: Record<string, Level>,
+  levelValues: Record<string, LevelValue>
+) {
+  const labelWidth = measureLabelWidth(beat.label ?? "");
+  const labelBasedWidth = HEADER_CHROME_WIDTH + labelWidth + LABEL_PADDING;
+  const chipBased = chipsRowWidth(beat, levels, levelValues);
+  const desired = Math.max(labelBasedWidth, chipBased);
   return Math.min(
     BEAT_MAX_WIDTH,
-    Math.max(
-      BEAT_MIN_WIDTH,
-      Math.ceil(HEADER_CHROME_WIDTH + labelWidth + LABEL_PADDING)
-    )
+    Math.max(BEAT_MIN_WIDTH, Math.ceil(desired))
   );
 }
 
@@ -83,6 +117,8 @@ export function Board() {
     currentBoardId,
     boards,
     boardNodes,
+    levels,
+    levelValues,
     setBoardViewport,
     ensureBoard,
     undoBoard,
@@ -113,8 +149,8 @@ export function Board() {
   }, [boardNodes, board]);
 
   const layout: BeatLayout[] = useMemo(
-    () => computeLayout(beats),
-    [beats]
+    () => computeLayout(beats, levels, levelValues),
+    [beats, levels, levelValues]
   );
 
   const layoutById = useMemo(() => {
@@ -311,14 +347,27 @@ export function Board() {
 
   return (
     <div className="flex-1 relative min-w-0 min-h-0 overflow-hidden bg-ink-950">
-      <button
-        onClick={() => setCreatingBeat(true)}
-        className="absolute top-3 right-3 z-30 h-10 px-4 rounded-lg bg-accent-400 hover:bg-accent-300 text-ink-950 font-medium text-sm inline-flex items-center gap-2 shadow-lg shadow-accent-400/20 transition"
-        title="Add beat (N)"
-      >
-        <Plus className="size-4" />
-        Add beat
-      </button>
+      <div className="absolute top-3 right-3 z-30 flex items-center gap-2">
+        <button
+          onClick={() => {
+            const s = useStore.getState();
+            downloadBackup(s.exportBackup(), s.meta?.name);
+          }}
+          className="h-10 px-3 rounded-lg border border-ink-700 hover:border-ink-600 bg-ink-900/80 backdrop-blur text-ink-200 hover:text-ink-50 text-sm inline-flex items-center gap-2 transition"
+          title="Download a JSON backup of your project"
+        >
+          <Download className="size-4" />
+          Save backup
+        </button>
+        <button
+          onClick={() => setCreatingBeat(true)}
+          className="h-10 px-4 rounded-lg bg-accent-400 hover:bg-accent-300 text-ink-950 font-medium text-sm inline-flex items-center gap-2 shadow-lg shadow-accent-400/20 transition"
+          title="Add beat (N)"
+        >
+          <Plus className="size-4" />
+          Add beat
+        </button>
+      </div>
 
       <div
         ref={surfaceRef}
@@ -417,7 +466,11 @@ export function Board() {
   );
 }
 
-function computeLayout(beats: BoardGroupNode[]): BeatLayout[] {
+function computeLayout(
+  beats: BoardGroupNode[],
+  levels: Record<string, Level>,
+  levelValues: Record<string, LevelValue>
+): BeatLayout[] {
   if (beats.length === 0) return [];
   // Build parent map for rank calculation.
   const parents = new Map<string, string[]>();
@@ -470,7 +523,7 @@ function computeLayout(beats: BoardGroupNode[]): BeatLayout[] {
   const colWidthByRank = new Map<number, number>();
   for (const r of sortedRanks) {
     const w = Math.max(
-      ...byRank.get(r)!.map((b) => beatWidthFor(b.label))
+      ...byRank.get(r)!.map((b) => beatWidthFor(b, levels, levelValues))
     );
     colWidthByRank.set(r, w);
   }
@@ -490,7 +543,7 @@ function computeLayout(beats: BoardGroupNode[]): BeatLayout[] {
         beat: b,
         x: cx,
         y: PADDING + i * (BEAT_HEIGHT + GAP_Y),
-        width: beatWidthFor(b.label),
+        width: beatWidthFor(b, levels, levelValues),
         rank: r,
       });
     });
@@ -621,7 +674,7 @@ function BeatCard({
           tagChips.map((t, i) => (
             <span
               key={i}
-              className="text-[10px] font-medium px-1.5 py-0.5 rounded"
+              className="text-[10px] font-medium px-1.5 py-0.5 rounded whitespace-nowrap shrink-0"
               style={{ backgroundColor: `${t.color}26`, color: t.color }}
               title={`${t.levelName}: ${t.valueName}`}
             >

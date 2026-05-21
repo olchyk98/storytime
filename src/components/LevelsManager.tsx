@@ -17,6 +17,7 @@ import clsx from "clsx";
 import { useStore, type BackupPayload, type ImportSummary } from "../state/store";
 import { fmtBytes } from "../lib/format";
 import { getAllSnapshots, deleteSnapshot, type SnapshotRecord } from "../lib/db";
+import { downloadBackup } from "../lib/downloadBackup";
 import type { Level, LevelValue } from "../types";
 
 export function LevelsManager({ onClose }: { onClose: () => void }) {
@@ -78,22 +79,7 @@ export function LevelsManager({ onClose }: { onClose: () => void }) {
   function doExport() {
     try {
       const payload = exportBackup();
-      const json = JSON.stringify(payload, null, 2);
-      const blob = new Blob([json], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-      const proj = (meta?.name ?? "storytime").replace(/[^a-z0-9-_]+/gi, "-");
-      const filename = `${proj}-backup-${stamp}.json`;
-      a.href = url;
-      a.download = filename;
-      // Append to DOM for max browser compatibility, then remove.
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      // Defer revoke so the browser has time to start the download.
-      setTimeout(() => URL.revokeObjectURL(url), 4000);
-
+      const { filename, bytes } = downloadBackup(payload, meta?.name);
       const totalClips = Object.keys(useStore.getState().clips).length;
       setExportSummary({
         filename,
@@ -101,7 +87,7 @@ export function LevelsManager({ onClose }: { onClose: () => void }) {
         values: payload.levelValues.length,
         taggedClips: payload.clipTags.length,
         totalClips,
-        bytes: blob.size,
+        bytes,
       });
     } catch (err) {
       console.error(err);
