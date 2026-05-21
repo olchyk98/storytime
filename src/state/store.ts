@@ -2,10 +2,10 @@ import { create } from "zustand";
 import type {
   Board,
   BoardArrowNode,
-  BoardCommentNode,
   BoardGroupNode,
   BoardNode,
   BoardRectNode,
+  BoardTextNode,
   Bucket,
   Clip,
   Level,
@@ -41,7 +41,7 @@ export interface ImportSummary {
 }
 
 export type ViewMode = "grid" | "board";
-export type BoardTool = "select" | "group" | "rect" | "comment" | "arrow";
+export type BoardTool = "select" | "group" | "rect" | "text" | "arrow";
 
 export type Selection =
   | { kind: "all" }
@@ -138,7 +138,7 @@ interface StoreState {
   setBoardViewport: (boardId: string, panX: number, panY: number, zoom: number) => void;
   createGroupNode: (boardId: string, x: number, y: number, w: number, h: number) => BoardGroupNode;
   createRectNode: (boardId: string, x: number, y: number, w: number, h: number) => BoardRectNode;
-  createCommentNode: (boardId: string, x: number, y: number) => BoardCommentNode;
+  createTextNode: (boardId: string, x: number, y: number) => BoardTextNode;
   createArrowNode: (
     boardId: string,
     x1: number,
@@ -153,8 +153,6 @@ interface StoreState {
   selectBoardNodes: (ids: string[]) => void;
   toggleBoardNodeSelected: (id: string) => void;
   clearBoardSelection: () => void;
-  addClipToGroup: (groupId: string, clipId: string) => void;
-  removeClipFromGroup: (groupId: string, clipId: string) => void;
   openGroupModal: (id: string) => void;
   closeGroupModal: () => void;
 
@@ -911,7 +909,6 @@ export const useStore = create<StoreState>((set, get) => {
         h,
         z,
         label: "Group",
-        clipIds: [],
       };
       set({
         boardNodes: { ...get().boardNodes, [n.id]: n },
@@ -942,20 +939,21 @@ export const useStore = create<StoreState>((set, get) => {
       db.putOne("boardNodes", n);
       return n;
     },
-    createCommentNode(boardId, x, y) {
+    createTextNode(boardId, x, y) {
       const peers = Object.values(get().boardNodes).filter((n) => n.boardId === boardId);
       const z = peers.length;
-      const n: BoardCommentNode = {
+      const n: BoardTextNode = {
         id: uid(),
         boardId,
         parentId: null,
-        kind: "comment",
+        kind: "text",
         x,
         y,
         w: 220,
-        h: 100,
+        h: 48,
         z,
         text: "",
+        fontSize: 20,
       };
       set({
         boardNodes: { ...get().boardNodes, [n.id]: n },
@@ -1029,25 +1027,6 @@ export const useStore = create<StoreState>((set, get) => {
       set({ boardSelectedIds: new Set() });
     },
 
-    addClipToGroup(groupId, clipId) {
-      const n = get().boardNodes[groupId];
-      if (!n || n.kind !== "group") return;
-      if (n.clipIds.includes(clipId)) return;
-      const u: BoardGroupNode = { ...n, clipIds: [...n.clipIds, clipId] };
-      set({ boardNodes: { ...get().boardNodes, [groupId]: u } });
-      db.putOne("boardNodes", u);
-    },
-    removeClipFromGroup(groupId, clipId) {
-      const n = get().boardNodes[groupId];
-      if (!n || n.kind !== "group") return;
-      if (!n.clipIds.includes(clipId)) return;
-      const u: BoardGroupNode = {
-        ...n,
-        clipIds: n.clipIds.filter((id) => id !== clipId),
-      };
-      set({ boardNodes: { ...get().boardNodes, [groupId]: u } });
-      db.putOne("boardNodes", u);
-    },
     openGroupModal(id) {
       set({ groupModalId: id });
     },

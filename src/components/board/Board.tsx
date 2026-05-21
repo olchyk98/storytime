@@ -4,7 +4,6 @@ import { useStore } from "../../state/store";
 import type { BoardNode as BoardNodeT } from "../../types";
 import { BoardNode } from "./BoardNode";
 import { BoardToolbar } from "./BoardToolbar";
-import { BoardLibrary, DRAG_MIME } from "./BoardLibrary";
 import { BoardArrowsLayer } from "./BoardArrowsLayer";
 
 const MIN_ZOOM = 0.2;
@@ -35,14 +34,13 @@ export function Board() {
     setBoardViewport,
     createGroupNode,
     createRectNode,
-    createCommentNode,
+    createTextNode,
     createArrowNode,
     updateBoardNode,
     deleteBoardNodes,
     boardSelectedIds,
     selectBoardNodes,
     clearBoardSelection,
-    addClipToGroup,
     ensureBoard,
   } = useStore();
 
@@ -67,7 +65,6 @@ export function Board() {
     | null
     | { x1: number; y1: number; x2: number; y2: number }
   >(null);
-  const [dragHoverGroupId, setDragHoverGroupId] = useState<string | null>(null);
 
   // Sort nodes by z so later ones render on top
   const sortedNodes = Object.values(boardNodes)
@@ -85,7 +82,7 @@ export function Board() {
       } else if (e.key === "v" || e.key === "V") setBoardTool("select");
       else if (e.key === "g" || e.key === "G") setBoardTool("group");
       else if (e.key === "r" || e.key === "R") setBoardTool("rect");
-      else if (e.key === "c" || e.key === "C") setBoardTool("comment");
+      else if (e.key === "t" || e.key === "T") setBoardTool("text");
       else if (e.key === "a" || e.key === "A") setBoardTool("arrow");
       else if (
         (e.key === "Backspace" || e.key === "Delete") &&
@@ -184,10 +181,12 @@ export function Board() {
     }
 
     if (boardTool === "group" || boardTool === "rect") {
-      // Draft a new rectangle
-      setDraftRect({ kind: boardTool, x: start.x, y: start.y, w: 0, h: 0 });
+      // Track draft in a closure variable so the commit side effect doesn't
+      // sit inside a setState updater (StrictMode runs those twice in dev).
+      let cur = { kind: boardTool, x: start.x, y: start.y, w: 0, h: 0 };
+      setDraftRect(cur);
       const onMove = (ev: PointerEvent) => {
-        const cur = clientToWorld(
+        const pt = clientToWorld(
           ev.clientX,
           ev.clientY,
           rect,
@@ -195,26 +194,23 @@ export function Board() {
           board.panY,
           board.zoom
         );
-        setDraftRect({
+        cur = {
           kind: boardTool,
-          x: Math.min(start.x, cur.x),
-          y: Math.min(start.y, cur.y),
-          w: Math.abs(cur.x - start.x),
-          h: Math.abs(cur.y - start.y),
-        });
+          x: Math.min(start.x, pt.x),
+          y: Math.min(start.y, pt.y),
+          w: Math.abs(pt.x - start.x),
+          h: Math.abs(pt.y - start.y),
+        };
+        setDraftRect(cur);
       };
       const onUp = () => {
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
-        // commit
-        setDraftRect((d) => {
-          if (!d) return null;
-          const w = Math.max(MIN_NODE_SIZE, d.w);
-          const h = Math.max(MIN_NODE_SIZE, d.h);
-          if (d.kind === "group") createGroupNode(board.id, d.x, d.y, w, h);
-          else createRectNode(board.id, d.x, d.y, w, h);
-          return null;
-        });
+        const w = Math.max(MIN_NODE_SIZE, cur.w);
+        const h = Math.max(MIN_NODE_SIZE, cur.h);
+        if (cur.kind === "group") createGroupNode(board.id, cur.x, cur.y, w, h);
+        else createRectNode(board.id, cur.x, cur.y, w, h);
+        setDraftRect(null);
         setBoardTool("select");
       };
       window.addEventListener("pointermove", onMove);
@@ -222,20 +218,19 @@ export function Board() {
       return;
     }
 
-    if (boardTool === "comment") {
-      // Click-to-place a comment centered on the cursor
-      const c = createCommentNode(board.id, start.x - 110, start.y - 30);
-      // Immediately let the user select it
-      selectBoardNodes([c.id]);
+    if (boardTool === "text") {
+      // Click-to-place a text label centered on the cursor
+      const t = createTextNode(board.id, start.x - 110, start.y - 16);
+      selectBoardNodes([t.id]);
       setBoardTool("select");
       return;
     }
 
     if (boardTool === "arrow") {
-      // Draft an arrow from start, drag to set endpoint
-      setDraftArrow({ x1: start.x, y1: start.y, x2: start.x, y2: start.y });
+      let cur = { x1: start.x, y1: start.y, x2: start.x, y2: start.y };
+      setDraftArrow(cur);
       const onMove = (ev: PointerEvent) => {
-        const cur = clientToWorld(
+        const pt = clientToWorld(
           ev.clientX,
           ev.clientY,
           rect,
@@ -243,28 +238,27 @@ export function Board() {
           board.panY,
           board.zoom
         );
-        setDraftArrow({ x1: start.x, y1: start.y, x2: cur.x, y2: cur.y });
+        cur = { x1: start.x, y1: start.y, x2: pt.x, y2: pt.y };
+        setDraftArrow(cur);
       };
       const onUp = () => {
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
-        setDraftArrow((a) => {
-          if (!a) return null;
-          const dist = Math.hypot(a.x2 - a.x1, a.y2 - a.y1);
-          if (dist < 8) return null; // ignore noise clicks
-          const fromNodeId = hitTestNode(a.x1, a.y1);
-          const toNodeId = hitTestNode(a.x2, a.y2);
+        const dist = Math.hypot(cur.x2 - cur.x1, cur.y2 - cur.y1);
+        if (dist >= 8) {
+          const fromNodeId = hitTestNode(cur.x1, cur.y1);
+          const toNodeId = hitTestNode(cur.x2, cur.y2);
           createArrowNode(
             board.id,
-            a.x1,
-            a.y1,
-            a.x2,
-            a.y2,
+            cur.x1,
+            cur.y1,
+            cur.x2,
+            cur.y2,
             fromNodeId,
             toNodeId
           );
-          return null;
-        });
+        }
+        setDraftArrow(null);
         setBoardTool("select");
       };
       window.addEventListener("pointermove", onMove);
@@ -411,50 +405,6 @@ export function Board() {
     window.addEventListener("pointerup", onUp);
   }
 
-  function onClipDragOverNode(e: React.DragEvent, node: BoardNodeT) {
-    if (node.kind !== "group") return;
-    if (!e.dataTransfer.types.includes(DRAG_MIME)) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "copy";
-    setDragHoverGroupId(node.id);
-  }
-
-  function onClipDropOnNode(e: React.DragEvent, node: BoardNodeT) {
-    if (node.kind !== "group") return;
-    const clipId = e.dataTransfer.getData(DRAG_MIME);
-    if (!clipId) return;
-    e.preventDefault();
-    e.stopPropagation();
-    addClipToGroup(node.id, clipId);
-    setDragHoverGroupId(null);
-  }
-
-  function onSurfaceDragOver(e: React.DragEvent) {
-    if (e.dataTransfer.types.includes(DRAG_MIME)) {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "copy";
-    }
-  }
-
-  function onSurfaceDrop(e: React.DragEvent) {
-    if (!board) return;
-    const clipId = e.dataTransfer.getData(DRAG_MIME);
-    if (!clipId) return;
-    e.preventDefault();
-    const rect = surfaceRef.current!.getBoundingClientRect();
-    const pt = clientToWorld(
-      e.clientX,
-      e.clientY,
-      rect,
-      board.panX,
-      board.panY,
-      board.zoom
-    );
-    // Auto-create a new group with this clip
-    const g = createGroupNode(board.id, pt.x - 140, pt.y - 100, 280, 200);
-    addClipToGroup(g.id, clipId);
-  }
-
   if (!board) {
     return (
       <div className="flex-1 flex items-center justify-center text-ink-300 text-sm">
@@ -469,21 +419,18 @@ export function Board() {
       boardTool === "rect" ||
       boardTool === "arrow"
     ? "crosshair"
-    : boardTool === "comment"
-    ? "copy"
+    : boardTool === "text"
+    ? "text"
     : "default";
 
   return (
     <div className="flex-1 relative min-w-0 min-h-0 overflow-hidden bg-ink-950">
       <BoardToolbar />
-      <BoardLibrary />
 
       <div
         ref={surfaceRef}
         data-board-surface
         onMouseDown={onSurfaceMouseDown}
-        onDragOver={onSurfaceDragOver}
-        onDrop={onSurfaceDrop}
         style={{ cursor }}
         className="absolute inset-0 select-none"
       >
@@ -527,12 +474,8 @@ export function Board() {
                 key={n.id}
                 node={n}
                 selected={boardSelectedIds.has(n.id)}
-                hoveredAsDropTarget={dragHoverGroupId === n.id}
                 onPointerDown={(e) => onNodePointerDown(e, n)}
                 onResizeHandleDown={(e) => onResizeHandleDown(e, n)}
-                onClipDragOver={(e) => onClipDragOverNode(e, n)}
-                onClipDragLeave={() => setDragHoverGroupId(null)}
-                onClipDrop={(e) => onClipDropOnNode(e, n)}
               />
             ))}
 
@@ -567,8 +510,8 @@ export function Board() {
               <div className="font-medium text-ink-200">Empty board.</div>
               <div className="mt-1 text-[12px] leading-relaxed">
                 Press <kbd className="px-1 rounded bg-ink-800 text-ink-100">G</kbd>{" "}
-                then drag to create a group, or drag a clip in from the library on
-                the right.
+                then drag to draw a group. It will fill itself with clips matching
+                whatever tags you set on it.
               </div>
             </div>
           </div>

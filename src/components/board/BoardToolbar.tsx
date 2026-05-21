@@ -1,10 +1,10 @@
 import clsx from "clsx";
 import {
   ArrowRight,
-  MessageSquare,
   MousePointer2,
   Square,
   SquareDashed,
+  Type,
 } from "lucide-react";
 import { useStore, type BoardTool } from "../../state/store";
 
@@ -37,11 +37,11 @@ const TOOLS: {
     icon: SquareDashed,
   },
   {
-    key: "comment",
-    label: "Comment",
-    hint: "Click to drop a sticky note",
-    shortcut: "C",
-    icon: MessageSquare,
+    key: "text",
+    label: "Text",
+    hint: "Click to drop a text label",
+    shortcut: "T",
+    icon: Type,
   },
   {
     key: "arrow",

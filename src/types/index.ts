@@ -31,17 +31,19 @@ export interface BoardNodeBase {
 
 export interface BoardGroupNode extends BoardNodeBase {
   kind: "group";
+  // Groups are saved filters: a clip is "in" the group if it matches all
+  // (levelId -> valueId) pairs in `tags`. Empty/absent tags = matches every clip.
   tags?: Record<LevelId, LevelValueId>;
-  clipIds: ClipId[];
 }
 
 export interface BoardRectNode extends BoardNodeBase {
   kind: "rect";
 }
 
-export interface BoardCommentNode extends BoardNodeBase {
-  kind: "comment";
+export interface BoardTextNode extends BoardNodeBase {
+  kind: "text";
   text: string;
+  fontSize?: number;
 }
 
 // Arrows use endpoints instead of box. We keep x/y/w/h from BoardNodeBase as a
@@ -59,7 +61,7 @@ export interface BoardArrowNode extends BoardNodeBase {
 export type BoardNode =
   | BoardGroupNode
   | BoardRectNode
-  | BoardCommentNode
+  | BoardTextNode
   | BoardArrowNode;
 
 export interface Level {

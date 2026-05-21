@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { X } from "lucide-react";
 import { useStore } from "../../state/store";
 import { ClipCard } from "../ClipCard";
+import { clipsMatchingGroup } from "./BoardNode";
 
 export function GroupModal() {
   const {
@@ -18,9 +19,9 @@ export function GroupModal() {
 
   const groupClips = useMemo(() => {
     if (!node || node.kind !== "group") return [];
-    return node.clipIds
-      .map((id) => clips[id])
-      .filter((c): c is NonNullable<typeof c> => Boolean(c));
+    return clipsMatchingGroup(clips, node.tags).sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { numeric: true })
+    );
   }, [node, clips]);
 
   const tagChips = useMemo(() => {
@@ -73,7 +74,7 @@ export function GroupModal() {
       <div className="flex-1 overflow-y-auto p-6 min-h-0">
         {groupClips.length === 0 ? (
           <div className="h-full flex items-center justify-center text-ink-400 text-sm">
-            This group is empty. Drag clips into it from the library.
+            No clips match this filter.
           </div>
         ) : (
           <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(280px,1fr))]">
