@@ -1,27 +1,47 @@
-import { useEffect, useRef, useState } from "react";
-import clsx from "clsx";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Copy,
+  Expand,
+  Pencil,
+  Plus,
+  Workflow,
+} from "lucide-react";
 import { useStore } from "../../state/store";
-import type { BoardNode as BoardNodeT } from "../../types";
-import { BoardNode } from "./BoardNode";
-import { BoardToolbar } from "./BoardToolbar";
-import { BoardArrowsLayer } from "./BoardArrowsLayer";
+import type { BoardGroupNode, Clip } from "../../types";
+import { BeatEditor } from "./BeatEditor";
+import { clipsMatchingGroup, sortClips } from "./BoardNode";
 
-const MIN_ZOOM = 0.2;
-const MAX_ZOOM = 3;
-const MIN_NODE_SIZE = 80;
+const BEAT_MIN_WIDTH = 280;
+const BEAT_MAX_WIDTH = 540;
+const BEAT_HEIGHT = 220;
+const GAP_X = 48;
+const GAP_Y = 56;
+const COLS = 5;
+const MIN_ZOOM = 0.3;
+const MAX_ZOOM = 2.5;
+const PADDING = 40;
 
-function clientToWorld(
-  clientX: number,
-  clientY: number,
-  rect: DOMRect,
-  panX: number,
-  panY: number,
-  zoom: number
-) {
-  return {
-    x: (clientX - rect.left - panX) / zoom,
-    y: (clientY - rect.top - panY) / zoom,
-  };
+// Reserved by the header's number badge + 5 buttons + paddings around them.
+const HEADER_CHROME_WIDTH = 25 + 6 * 24 + 28;
+// Approx px per char for 14px Inter at medium weight — enough headroom that we
+// rarely truncate. Anything longer than the cap relies on CSS truncation.
+const CHAR_PX = 7.5;
+
+function beatWidthFor(label: string | undefined) {
+  const labelWidth = (label?.length ?? 0) * CHAR_PX;
+  return Math.min(
+    BEAT_MAX_WIDTH,
+    Math.max(BEAT_MIN_WIDTH, Math.ceil(HEADER_CHROME_WIDTH + labelWidth))
+  );
+}
+
+interface BeatLayout {
+  beat: BoardGroupNode;
+  x: number;
+  y: number;
+  width: number;
 }
 
 export function Board() {
@@ -29,62 +49,58 @@ export function Board() {
     currentBoardId,
     boards,
     boardNodes,
-    boardTool,
-    setBoardTool,
     setBoardViewport,
-    createGroupNode,
-    createRectNode,
-    createTextNode,
-    createArrowNode,
-    updateBoardNode,
-    deleteBoardNodes,
-    boardSelectedIds,
-    selectBoardNodes,
-    clearBoardSelection,
     ensureBoard,
-    pushBoardHistory,
     undoBoard,
     redoBoard,
-    copySelectedBoardNodes,
-    pasteBoardClipboard,
   } = useStore();
+
+  const board = currentBoardId ? boards[currentBoardId] : null;
+  const surfaceRef = useRef<HTMLDivElement>(null);
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  const [editingBeatId, setEditingBeatId] = useState<string | null>(null);
+  const [creatingBeat, setCreatingBeat] = useState(false);
 
   useEffect(() => {
     if (!currentBoardId) ensureBoard();
   }, [currentBoardId, ensureBoard]);
 
-  const board = currentBoardId ? boards[currentBoardId] : null;
-  const surfaceRef = useRef<HTMLDivElement>(null);
-  const [spaceHeld, setSpaceHeld] = useState(false);
-  const [draftRect, setDraftRect] = useState<
-    | null
-    | {
-        kind: "group" | "rect";
-        x: number;
-        y: number;
-        w: number;
-        h: number;
-      }
-  >(null);
-  const [draftArrow, setDraftArrow] = useState<
-    | null
-    | { x1: number; y1: number; x2: number; y2: number }
-  >(null);
+  const beats = useMemo(() => {
+    if (!board) return [] as BoardGroupNode[];
+    return Object.values(boardNodes)
+      .filter(
+        (n): n is BoardGroupNode =>
+          n.boardId === board.id && n.kind === "group"
+      )
+      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  }, [boardNodes, board]);
 
-  // Sort nodes by z so later ones render on top
-  const sortedNodes = Object.values(boardNodes)
-    .filter((n) => n.boardId === currentBoardId)
-    .sort((a, b) => a.z - b.z);
+  const layout: BeatLayout[] = useMemo(() => {
+    const out: BeatLayout[] = [];
+    for (let i = 0; i < beats.length; i++) {
+      const beat = beats[i];
+      const width = beatWidthFor(beat.label);
+      const col = i % COLS;
+      const row = Math.floor(i / COLS);
+      const y = PADDING + row * (BEAT_HEIGHT + GAP_Y);
+      const x =
+        col === 0
+          ? PADDING
+          : out[i - 1].x + out[i - 1].width + GAP_X;
+      out.push({ beat, x, y, width });
+    }
+    return out;
+  }, [beats]);
 
-  // Spacebar = temporary pan tool
+  // Keyboard
   useEffect(() => {
     function down(e: KeyboardEvent) {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement
+      )
         return;
-
       const mod = e.metaKey || e.ctrlKey;
-
-      // Undo / redo
       if (mod && (e.key === "z" || e.key === "Z")) {
         e.preventDefault();
         if (e.shiftKey) redoBoard();
@@ -96,41 +112,12 @@ export function Board() {
         redoBoard();
         return;
       }
-      // Copy / paste
-      if (mod && (e.key === "c" || e.key === "C")) {
-        e.preventDefault();
-        copySelectedBoardNodes();
-        return;
-      }
-      if (mod && (e.key === "v" || e.key === "V")) {
-        e.preventDefault();
-        pasteBoardClipboard();
-        return;
-      }
-      // Duplicate
-      if (mod && (e.key === "d" || e.key === "D")) {
-        e.preventDefault();
-        copySelectedBoardNodes();
-        pasteBoardClipboard();
-        return;
-      }
-
       if (e.code === "Space") {
         e.preventDefault();
         setSpaceHeld(true);
-      } else if (e.key === "v" || e.key === "V") setBoardTool("select");
-      else if (e.key === "g" || e.key === "G") setBoardTool("group");
-      else if (e.key === "r" || e.key === "R") setBoardTool("rect");
-      else if (e.key === "t" || e.key === "T") setBoardTool("text");
-      else if (e.key === "a" || e.key === "A") setBoardTool("arrow");
-      else if (
-        (e.key === "Backspace" || e.key === "Delete") &&
-        boardSelectedIds.size > 0
-      ) {
+      } else if (e.key === "n" || e.key === "N") {
         e.preventDefault();
-        deleteBoardNodes([...boardSelectedIds]);
-      } else if (e.key === "Escape") {
-        clearBoardSelection();
+        setCreatingBeat(true);
       }
     }
     function up(e: KeyboardEvent) {
@@ -142,18 +129,9 @@ export function Board() {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
     };
-  }, [
-    boardSelectedIds,
-    deleteBoardNodes,
-    clearBoardSelection,
-    setBoardTool,
-    undoBoard,
-    redoBoard,
-    copySelectedBoardNodes,
-    pasteBoardClipboard,
-  ]);
+  }, [undoBoard, redoBoard]);
 
-  // Wheel = pan; ctrl/meta+wheel = zoom around cursor
+  // Wheel: pan; ctrl/meta+wheel: zoom around cursor
   useEffect(() => {
     const el = surfaceRef.current;
     if (!el || !board) return;
@@ -186,270 +164,17 @@ export function Board() {
     if (!board) return;
     if (e.button !== 0) return;
     const target = e.target as HTMLElement;
-    // Only act when the click is on the surface itself (not a node)
     if (!target.dataset.boardSurface) return;
 
-    const rect = surfaceRef.current!.getBoundingClientRect();
-    const start = clientToWorld(
-      e.clientX,
-      e.clientY,
-      rect,
-      board.panX,
-      board.panY,
-      board.zoom
-    );
-
-    // Pan with space-held, or select tool on empty canvas
-    const wantPan =
-      spaceHeld ||
-      (boardTool === "select" && !e.shiftKey && !e.metaKey && !e.ctrlKey);
-
-    if (wantPan && boardTool === "select") {
-      // Clear selection only if a plain click on empty space
-      clearBoardSelection();
-      const startPanX = board.panX;
-      const startPanY = board.panY;
-      const startClientX = e.clientX;
-      const startClientY = e.clientY;
-      let moved = false;
-      const onMove = (ev: PointerEvent) => {
-        const dx = ev.clientX - startClientX;
-        const dy = ev.clientY - startClientY;
-        if (!moved && Math.abs(dx) + Math.abs(dy) < 3) return;
-        moved = true;
-        setBoardViewport(board.id, startPanX + dx, startPanY + dy, board.zoom);
-      };
-      const onUp = () => {
-        window.removeEventListener("pointermove", onMove);
-        window.removeEventListener("pointerup", onUp);
-      };
-      window.addEventListener("pointermove", onMove);
-      window.addEventListener("pointerup", onUp);
-      return;
-    }
-
-    if (boardTool === "group" || boardTool === "rect") {
-      // Track draft in a closure variable so the commit side effect doesn't
-      // sit inside a setState updater (StrictMode runs those twice in dev).
-      let cur = { kind: boardTool, x: start.x, y: start.y, w: 0, h: 0 };
-      setDraftRect(cur);
-      const onMove = (ev: PointerEvent) => {
-        const pt = clientToWorld(
-          ev.clientX,
-          ev.clientY,
-          rect,
-          board.panX,
-          board.panY,
-          board.zoom
-        );
-        cur = {
-          kind: boardTool,
-          x: Math.min(start.x, pt.x),
-          y: Math.min(start.y, pt.y),
-          w: Math.abs(pt.x - start.x),
-          h: Math.abs(pt.y - start.y),
-        };
-        setDraftRect(cur);
-      };
-      const onUp = () => {
-        window.removeEventListener("pointermove", onMove);
-        window.removeEventListener("pointerup", onUp);
-        const w = Math.max(MIN_NODE_SIZE, cur.w);
-        const h = Math.max(MIN_NODE_SIZE, cur.h);
-        if (cur.kind === "group") createGroupNode(board.id, cur.x, cur.y, w, h);
-        else createRectNode(board.id, cur.x, cur.y, w, h);
-        setDraftRect(null);
-        setBoardTool("select");
-      };
-      window.addEventListener("pointermove", onMove);
-      window.addEventListener("pointerup", onUp);
-      return;
-    }
-
-    if (boardTool === "text") {
-      // Click-to-place a text label centered on the cursor
-      const t = createTextNode(board.id, start.x - 110, start.y - 16);
-      selectBoardNodes([t.id]);
-      setBoardTool("select");
-      return;
-    }
-
-    if (boardTool === "arrow") {
-      let cur = { x1: start.x, y1: start.y, x2: start.x, y2: start.y };
-      setDraftArrow(cur);
-      const onMove = (ev: PointerEvent) => {
-        const pt = clientToWorld(
-          ev.clientX,
-          ev.clientY,
-          rect,
-          board.panX,
-          board.panY,
-          board.zoom
-        );
-        cur = { x1: start.x, y1: start.y, x2: pt.x, y2: pt.y };
-        setDraftArrow(cur);
-      };
-      const onUp = () => {
-        window.removeEventListener("pointermove", onMove);
-        window.removeEventListener("pointerup", onUp);
-        const dist = Math.hypot(cur.x2 - cur.x1, cur.y2 - cur.y1);
-        if (dist >= 8) {
-          const fromNodeId = hitTestNode(cur.x1, cur.y1);
-          const toNodeId = hitTestNode(cur.x2, cur.y2);
-          createArrowNode(
-            board.id,
-            cur.x1,
-            cur.y1,
-            cur.x2,
-            cur.y2,
-            fromNodeId,
-            toNodeId
-          );
-        }
-        setDraftArrow(null);
-        setBoardTool("select");
-      };
-      window.addEventListener("pointermove", onMove);
-      window.addEventListener("pointerup", onUp);
-      return;
-    }
-  }
-
-  function hitTestNode(wx: number, wy: number): string | undefined {
-    // Top-of-stack first
-    const candidates = sortedNodes
-      .filter((n) => n.kind !== "arrow")
-      .sort((a, b) => b.z - a.z);
-    for (const n of candidates) {
-      if (wx >= n.x && wx <= n.x + n.w && wy >= n.y && wy <= n.y + n.h) {
-        return n.id;
-      }
-    }
-    return undefined;
-  }
-
-  function onNodePointerDown(e: React.PointerEvent, node: BoardNodeT) {
-    if (!board) return;
-    if (e.button !== 0) return;
-    e.stopPropagation();
-
-    // Select
-    if (e.shiftKey) {
-      selectBoardNodes([...boardSelectedIds, node.id]);
-    } else if (!boardSelectedIds.has(node.id)) {
-      selectBoardNodes([node.id]);
-    }
-
-    // Start move
-    const rect = surfaceRef.current!.getBoundingClientRect();
-    const start = clientToWorld(
-      e.clientX,
-      e.clientY,
-      rect,
-      board.panX,
-      board.panY,
-      board.zoom
-    );
-    const origin: Record<string, { x: number; y: number }> = {};
-    const ids = boardSelectedIds.has(node.id)
-      ? [...boardSelectedIds]
-      : [node.id];
-    for (const id of ids) {
-      const n = boardNodes[id];
-      if (n) origin[id] = { x: n.x, y: n.y };
-    }
-    // For arrows we also need to remember endpoints
-    const arrowOrigin: Record<
-      string,
-      { x1: number; y1: number; x2: number; y2: number }
-    > = {};
-    for (const id of ids) {
-      const n = boardNodes[id];
-      if (n && n.kind === "arrow") {
-        arrowOrigin[id] = { x1: n.x1, y1: n.y1, x2: n.x2, y2: n.y2 };
-      }
-    }
-
-    let moved = false;
+    // Pan
+    const startPanX = board.panX;
+    const startPanY = board.panY;
+    const startClientX = e.clientX;
+    const startClientY = e.clientY;
     const onMove = (ev: PointerEvent) => {
-      const cur = clientToWorld(
-        ev.clientX,
-        ev.clientY,
-        rect,
-        board.panX,
-        board.panY,
-        board.zoom
-      );
-      const dx = cur.x - start.x;
-      const dy = cur.y - start.y;
-      if (!moved && Math.abs(dx) + Math.abs(dy) < 3 / board.zoom) return;
-      if (!moved) pushBoardHistory();
-      moved = true;
-      for (const id of ids) {
-        const o = origin[id];
-        if (!o) continue;
-        const arrowO = arrowOrigin[id];
-        if (arrowO) {
-          updateBoardNode(id, {
-            x: o.x + dx,
-            y: o.y + dy,
-            x1: arrowO.x1 + dx,
-            y1: arrowO.y1 + dy,
-            x2: arrowO.x2 + dx,
-            y2: arrowO.y2 + dy,
-            // moving an arrow detaches it from any attached nodes
-            fromNodeId: undefined,
-            toNodeId: undefined,
-          });
-        } else {
-          updateBoardNode(id, { x: o.x + dx, y: o.y + dy });
-        }
-      }
-    };
-    const onUp = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-  }
-
-  function onResizeHandleDown(e: React.PointerEvent, node: BoardNodeT) {
-    if (!board) return;
-    if (e.button !== 0) return;
-    e.stopPropagation();
-    selectBoardNodes([node.id]);
-    const rect = surfaceRef.current!.getBoundingClientRect();
-    const start = clientToWorld(
-      e.clientX,
-      e.clientY,
-      rect,
-      board.panX,
-      board.panY,
-      board.zoom
-    );
-    const ow = node.w;
-    const oh = node.h;
-    let snapshotted = false;
-    const onMove = (ev: PointerEvent) => {
-      const cur = clientToWorld(
-        ev.clientX,
-        ev.clientY,
-        rect,
-        board.panX,
-        board.panY,
-        board.zoom
-      );
-      const dx = cur.x - start.x;
-      const dy = cur.y - start.y;
-      if (!snapshotted) {
-        pushBoardHistory();
-        snapshotted = true;
-      }
-      updateBoardNode(node.id, {
-        w: Math.max(MIN_NODE_SIZE, ow + dx),
-        h: Math.max(MIN_NODE_SIZE, oh + dy),
-      });
+      const dx = ev.clientX - startClientX;
+      const dy = ev.clientY - startClientY;
+      setBoardViewport(board.id, startPanX + dx, startPanY + dy, board.zoom);
     };
     const onUp = () => {
       window.removeEventListener("pointermove", onMove);
@@ -462,24 +187,24 @@ export function Board() {
   if (!board) {
     return (
       <div className="flex-1 flex items-center justify-center text-ink-300 text-sm">
-        Setting up board…
+        Setting up beats…
       </div>
     );
   }
 
-  const cursor = spaceHeld
-    ? "grab"
-    : boardTool === "group" ||
-      boardTool === "rect" ||
-      boardTool === "arrow"
-    ? "crosshair"
-    : boardTool === "text"
-    ? "text"
-    : "default";
+  const cursor = spaceHeld ? "grab" : "default";
 
   return (
     <div className="flex-1 relative min-w-0 min-h-0 overflow-hidden bg-ink-950">
-      <BoardToolbar />
+      {/* Floating add button — top right */}
+      <button
+        onClick={() => setCreatingBeat(true)}
+        className="absolute top-3 right-3 z-30 h-10 px-4 rounded-lg bg-accent-400 hover:bg-accent-300 text-ink-950 font-medium text-sm inline-flex items-center gap-2 shadow-lg shadow-accent-400/20 transition"
+        title="Add beat (N)"
+      >
+        <Plus className="size-4" />
+        Add beat
+      </button>
 
       <div
         ref={surfaceRef}
@@ -488,7 +213,7 @@ export function Board() {
         style={{ cursor }}
         className="absolute inset-0 select-none"
       >
-        {/* Grid background */}
+        {/* Dotted background */}
         <div
           className="absolute inset-0 pointer-events-none"
           style={{
@@ -496,11 +221,10 @@ export function Board() {
               "radial-gradient(circle at 1px 1px, oklch(0.30 0.014 265) 1px, transparent 0)",
             backgroundSize: `${24 * board.zoom}px ${24 * board.zoom}px`,
             backgroundPosition: `${board.panX}px ${board.panY}px`,
-            opacity: 0.6,
+            opacity: 0.5,
           }}
         />
 
-        {/* World transform */}
         <div
           data-board-surface
           className="absolute top-0 left-0"
@@ -509,68 +233,318 @@ export function Board() {
             transformOrigin: "0 0",
           }}
         >
-          {/* Arrows render under everything else; they pick their own pointer events */}
-          <BoardArrowsLayer
-            nodes={sortedNodes}
-            selectedIds={boardSelectedIds}
-            onSelect={(id, additive) => {
-              if (additive)
-                selectBoardNodes([...boardSelectedIds, id]);
-              else selectBoardNodes([id]);
-            }}
-            draftArrow={draftArrow}
-          />
+          {/* Arrows behind cards */}
+          <SequenceArrows layout={layout} />
 
-          {sortedNodes
-            .filter((n) => n.kind !== "arrow")
-            .map((n) => (
-              <BoardNode
-                key={n.id}
-                node={n}
-                selected={boardSelectedIds.has(n.id)}
-                onPointerDown={(e) => onNodePointerDown(e, n)}
-                onResizeHandleDown={(e) => onResizeHandleDown(e, n)}
-              />
-            ))}
-
-          {/* Draft rectangle */}
-          {draftRect && (
-            <div
-              className={clsx(
-                "absolute border-2 border-dashed rounded-lg pointer-events-none",
-                draftRect.kind === "group"
-                  ? "border-accent-400 bg-accent-400/10"
-                  : "border-ink-400 bg-ink-400/10"
-              )}
-              style={{
-                left: draftRect.x,
-                top: draftRect.y,
-                width: draftRect.w,
-                height: draftRect.h,
-              }}
+          {layout.map(({ beat, x, y, width }, i) => (
+            <BeatCard
+              key={beat.id}
+              beat={beat}
+              x={x}
+              y={y}
+              width={width}
+              index={i}
+              total={layout.length}
+              onEdit={() => setEditingBeatId(beat.id)}
             />
-          )}
+          ))}
         </div>
 
-        {/* Zoom indicator */}
-        <div className="absolute bottom-3 left-3 z-10 px-2 py-1 rounded-md bg-ink-850/80 backdrop-blur border border-ink-700 text-[11px] font-mono text-ink-300">
-          {Math.round(board.zoom * 100)}%
-        </div>
-
-        {/* Hint */}
-        {sortedNodes.length === 0 && !draftRect && (
+        {beats.length === 0 && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div className="text-center text-ink-400 text-sm max-w-xs">
-              <div className="font-medium text-ink-200">Empty board.</div>
-              <div className="mt-1 text-[12px] leading-relaxed">
-                Press <kbd className="px-1 rounded bg-ink-800 text-ink-100">G</kbd>{" "}
-                then drag to draw a group. It will fill itself with clips matching
-                whatever tags you set on it.
+            <div className="text-center max-w-md pointer-events-auto">
+              <div className="size-14 rounded-2xl bg-gradient-to-br from-accent-500 to-rose-500 flex items-center justify-center mx-auto mb-4">
+                <Workflow className="size-7 text-ink-950" strokeWidth={2.4} />
+              </div>
+              <h2 className="text-xl font-medium text-ink-50 mb-2 tracking-tight">
+                Tell your story in beats
+              </h2>
+              <p className="text-sm text-ink-300 leading-relaxed max-w-sm mx-auto">
+                A beat is a moment — "at home", "first speech", "gala
+                afterparty". Define it by tags + manual exceptions; we'll lay
+                them out in order.
+              </p>
+              <button
+                onClick={() => setCreatingBeat(true)}
+                className="mt-5 h-10 px-5 rounded-lg bg-accent-400 hover:bg-accent-300 text-ink-950 font-medium text-sm inline-flex items-center gap-2"
+              >
+                <Plus className="size-4" /> Add your first beat
+              </button>
+              <div className="mt-3 text-[11px] text-ink-500">
+                Or press <kbd className="px-1 rounded bg-ink-800 text-ink-100">N</kbd>
               </div>
             </div>
           </div>
         )}
+
+        <div className="absolute bottom-3 left-3 z-10 px-2 py-1 rounded-md bg-ink-850/80 backdrop-blur border border-ink-700 text-[11px] font-mono text-ink-300">
+          {Math.round(board.zoom * 100)}%
+        </div>
+      </div>
+
+      {(creatingBeat || editingBeatId) && (
+        <BeatEditor
+          beatId={editingBeatId}
+          onClose={() => {
+            setCreatingBeat(false);
+            setEditingBeatId(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function BeatCard({
+  beat,
+  x,
+  y,
+  width,
+  index,
+  total,
+  onEdit,
+}: {
+  beat: BoardGroupNode;
+  x: number;
+  y: number;
+  width: number;
+  index: number;
+  total: number;
+  onEdit: () => void;
+}) {
+  const { clips, levels, levelValues, reorderBeat, openGroupModal, cloneBeat } =
+    useStore();
+
+  const matching = useMemo(
+    () => clipsMatchingGroup(clips, beat.tags),
+    [clips, beat.tags]
+  );
+  const excluded = new Set(beat.excludedClipIds ?? []);
+  const included = matching.filter((c) => !excluded.has(c.id));
+  const sorted = useMemo(
+    () => sortClips(included, beat.sort),
+    [included, beat.sort]
+  );
+
+  const tagChips = useMemo(() => {
+    if (!beat.tags) return [];
+    const out: { levelName: string; valueName: string; color: string }[] = [];
+    for (const [lid, vid] of Object.entries(beat.tags)) {
+      const l = levels[lid];
+      const v = levelValues[vid];
+      if (!l || !v) continue;
+      out.push({ levelName: l.name, valueName: v.name, color: v.color });
+    }
+    return out;
+  }, [beat.tags, levels, levelValues]);
+
+  const VISIBLE_MAX = 40;
+  const visible = sorted.slice(0, VISIBLE_MAX);
+  const overflow = sorted.length - visible.length;
+
+  const hasFilter = !!(beat.tags && Object.keys(beat.tags).length > 0);
+
+  return (
+    <div
+      className="absolute rounded-xl border-2 border-ink-700 bg-ink-900/95 backdrop-blur-sm flex flex-col overflow-hidden shadow-lg shadow-ink-950/40 hover:border-ink-600 transition-colors"
+      style={{
+        left: x,
+        top: y,
+        width,
+        height: BEAT_HEIGHT,
+      }}
+    >
+      {/* Header */}
+      <div className="flex items-center gap-1.5 px-3 py-2 border-b border-ink-800 bg-ink-850/80">
+        <span className="text-[10px] font-mono text-ink-500 tabular-nums w-5 text-right">
+          {index + 1}
+        </span>
+        <div
+          className="flex-1 text-sm font-medium text-ink-50 truncate cursor-pointer"
+          onClick={onEdit}
+          title={beat.label}
+        >
+          {beat.label || "Untitled"}
+        </div>
+        <button
+          onClick={() => reorderBeat(beat.id, -1)}
+          disabled={index === 0}
+          className="size-6 rounded hover:bg-ink-800 text-ink-300 hover:text-ink-50 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center transition"
+          title="Move earlier"
+        >
+          <ArrowLeft className="size-3.5" />
+        </button>
+        <button
+          onClick={() => reorderBeat(beat.id, 1)}
+          disabled={index === total - 1}
+          className="size-6 rounded hover:bg-ink-800 text-ink-300 hover:text-ink-50 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center transition"
+          title="Move later"
+        >
+          <ArrowRight className="size-3.5" />
+        </button>
+        <button
+          onClick={() => cloneBeat(beat.id)}
+          className="size-6 rounded hover:bg-ink-800 text-ink-300 hover:text-ink-50 flex items-center justify-center"
+          title="Clone beat"
+        >
+          <Copy className="size-3.5" />
+        </button>
+        <button
+          onClick={onEdit}
+          className="size-6 rounded hover:bg-ink-800 text-ink-300 hover:text-ink-50 flex items-center justify-center"
+          title="Edit beat"
+        >
+          <Pencil className="size-3.5" />
+        </button>
+        <button
+          onClick={() => openGroupModal(beat.id)}
+          className="size-6 rounded hover:bg-ink-800 text-ink-300 hover:text-ink-50 flex items-center justify-center"
+          title="Open beat"
+        >
+          <Expand className="size-3.5" />
+        </button>
+      </div>
+
+      {/* Tags + count */}
+      <div className="flex items-center gap-1 px-3 py-1.5 border-b border-ink-800 bg-ink-900/60">
+        {tagChips.length === 0 ? (
+          <span className="text-[10px] text-ink-500 italic">
+            {hasFilter ? "Filter set" : "No filter — all clips"}
+          </span>
+        ) : (
+          tagChips.map((t, i) => (
+            <span
+              key={i}
+              className="text-[10px] font-medium px-1.5 py-0.5 rounded"
+              style={{ backgroundColor: `${t.color}26`, color: t.color }}
+              title={`${t.levelName}: ${t.valueName}`}
+            >
+              {t.valueName}
+            </span>
+          ))
+        )}
+        <span className="flex-1" />
+        <span className="text-[10px] font-mono text-ink-400 tabular-nums">
+          {sorted.length}
+          {excluded.size > 0 && (
+            <span className="text-rose-500/70"> (−{excluded.size})</span>
+          )}
+        </span>
+      </div>
+
+      {/* Body */}
+      <div className="flex-1 min-h-0 overflow-hidden p-2" onClick={onEdit}>
+        {sorted.length === 0 ? (
+          <div className="size-full rounded-lg border-2 border-dashed border-ink-800 flex items-center justify-center text-[11px] text-ink-500 px-3 text-center cursor-pointer">
+            {hasFilter ? "No matching clips" : "Click to configure"}
+          </div>
+        ) : (
+          <div
+            className="grid gap-1"
+            style={{
+              gridTemplateColumns: "repeat(auto-fill, minmax(56px, 1fr))",
+              gridAutoRows: "min-content",
+            }}
+          >
+            {visible.map((c: Clip) => (
+              <div
+                key={c.id}
+                className="aspect-video rounded overflow-hidden bg-ink-950"
+                title={c.name}
+              >
+                {c.thumb ? (
+                  <img
+                    src={c.thumb}
+                    alt=""
+                    className="size-full object-cover pointer-events-none"
+                    draggable={false}
+                  />
+                ) : (
+                  <div className="size-full shimmer" />
+                )}
+              </div>
+            ))}
+            {overflow > 0 && (
+              <div className="aspect-video rounded bg-ink-850 text-[11px] text-ink-300 flex items-center justify-center font-mono">
+                +{overflow}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
+  );
+}
+
+function SequenceArrows({ layout }: { layout: BeatLayout[] }) {
+  if (layout.length < 2) return null;
+  const VIEW = 20000;
+  return (
+    <svg
+      className="absolute pointer-events-none"
+      width={VIEW}
+      height={VIEW}
+      style={{ left: -VIEW / 2, top: -VIEW / 2, overflow: "visible" }}
+      viewBox={`${-VIEW / 2} ${-VIEW / 2} ${VIEW} ${VIEW}`}
+    >
+      <defs>
+        <marker
+          id="beat-arrowhead"
+          markerWidth="12"
+          markerHeight="12"
+          refX="10"
+          refY="6"
+          orient="auto"
+          markerUnits="userSpaceOnUse"
+        >
+          <path d="M0,0 L0,12 L10,6 z" fill="#cbd5e1" />
+        </marker>
+      </defs>
+      {layout.slice(0, -1).map(({ x, y, width }, i) => {
+        const next = layout[i + 1];
+        const startX = x + width;
+        const startY = y + BEAT_HEIGHT / 2;
+        const endX = next.x;
+        const endY = next.y + BEAT_HEIGHT / 2;
+        const sameRow = Math.abs(endY - startY) < 1;
+        const padding = 6;
+
+        if (sameRow) {
+          return (
+            <line
+              key={i}
+              x1={startX + padding}
+              y1={startY}
+              x2={endX - padding}
+              y2={endY}
+              stroke="#cbd5e1"
+              strokeWidth={1.5}
+              markerEnd="url(#beat-arrowhead)"
+              vectorEffect="non-scaling-stroke"
+            />
+          );
+        }
+
+        // Different row: curve down and back to the start of next row
+        const midX = (startX + (next.x + next.width)) / 2;
+        const path = `
+          M ${startX + padding},${startY}
+          C ${startX + 80},${startY} ${midX + 80},${startY} ${midX},${(startY + endY) / 2}
+          C ${midX - 80},${endY} ${endX - 80},${endY} ${endX - padding},${endY}
+        `;
+        return (
+          <path
+            key={i}
+            d={path}
+            fill="none"
+            stroke="#cbd5e1"
+            strokeWidth={1.5}
+            markerEnd="url(#beat-arrowhead)"
+            vectorEffect="non-scaling-stroke"
+            opacity={0.6}
+          />
+        );
+      })}
+    </svg>
   );
 }

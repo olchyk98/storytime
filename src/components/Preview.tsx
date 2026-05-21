@@ -76,7 +76,7 @@ export function Preview() {
   return (
     <div
       ref={containerRef}
-      className="fixed inset-0 z-40 bg-ink-950/95 backdrop-blur-sm flex flex-col fade-in"
+      className="fixed inset-0 z-[60] bg-ink-950/95 backdrop-blur-sm flex flex-col fade-in"
     >
       <div className="flex items-center gap-3 px-5 py-3 border-b border-ink-800">
         <div className="flex-1 min-w-0">

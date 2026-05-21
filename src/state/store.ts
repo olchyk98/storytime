@@ -140,6 +140,16 @@ interface StoreState {
   setBoardTool: (t: BoardTool) => void;
   setBoardViewport: (boardId: string, panX: number, panY: number, zoom: number) => void;
   createGroupNode: (boardId: string, x: number, y: number, w: number, h: number) => BoardGroupNode;
+  createBeat: (
+    boardId: string,
+    params: {
+      label: string;
+      tags?: Record<string, string>;
+      excludedClipIds?: string[];
+    }
+  ) => BoardGroupNode;
+  reorderBeat: (id: string, direction: -1 | 1) => void;
+  cloneBeat: (id: string) => BoardGroupNode | null;
   createRectNode: (boardId: string, x: number, y: number, w: number, h: number) => BoardRectNode;
   createTextNode: (boardId: string, x: number, y: number) => BoardTextNode;
   createArrowNode: (
@@ -278,6 +288,23 @@ export const useStore = create<StoreState>((set, get) => {
       for (const b of boards) boardMap[b.id] = b;
       const boardNodeMap: Record<string, BoardNode> = {};
       for (const n of boardNodes) boardNodeMap[n.id] = n;
+
+      // One-time migration to the Beats model: wipe any existing board content
+      // (free-form rectangles, text, arrows, and old groups). Future installs
+      // start with an empty boardNodes anyway.
+      const BEATS_MIGRATION_KEY = "storytime.beatsMigration.v1";
+      try {
+        if (
+          localStorage.getItem(BEATS_MIGRATION_KEY) !== "done" &&
+          Object.keys(boardNodeMap).length > 0
+        ) {
+          for (const id of Object.keys(boardNodeMap)) {
+            delete boardNodeMap[id];
+            db.deleteOne("boardNodes", id);
+          }
+        }
+        localStorage.setItem(BEATS_MIGRATION_KEY, "done");
+      } catch {}
 
       let needsPerm = false;
       if (meta?.rootHandle) {
@@ -928,6 +955,102 @@ export const useStore = create<StoreState>((set, get) => {
       });
       db.putOne("boardNodes", n);
       return n;
+    },
+    createBeat(boardId, params) {
+      get().pushBoardHistory();
+      const peers = Object.values(get().boardNodes).filter(
+        (n): n is BoardGroupNode => n.boardId === boardId && n.kind === "group"
+      );
+      const maxOrder = peers.reduce(
+        (m, n) => Math.max(m, n.order ?? 0),
+        -1
+      );
+      const n: BoardGroupNode = {
+        id: uid(),
+        boardId,
+        parentId: null,
+        kind: "group",
+        x: 0,
+        y: 0,
+        w: 260,
+        h: 200,
+        z: peers.length,
+        label: params.label,
+        tags: params.tags,
+        excludedClipIds: params.excludedClipIds,
+        order: maxOrder + 1,
+      };
+      set({ boardNodes: { ...get().boardNodes, [n.id]: n } });
+      db.putOne("boardNodes", n);
+      return n;
+    },
+    cloneBeat(id) {
+      const source = get().boardNodes[id];
+      if (!source || source.kind !== "group") return null;
+      get().pushBoardHistory();
+      const sourceOrder = source.order ?? 0;
+      // Bump every beat that sits at-or-after the source's NEXT slot by 1
+      // so the clone slides in immediately after the original.
+      const next: Record<string, BoardNode> = { ...get().boardNodes };
+      for (const n of Object.values(next)) {
+        if (n.kind !== "group" || n.boardId !== source.boardId) continue;
+        if (n.id === source.id) continue;
+        const o = n.order ?? 0;
+        if (o > sourceOrder) {
+          const u: BoardGroupNode = { ...n, order: o + 1 };
+          next[n.id] = u;
+          db.putOne("boardNodes", u);
+        }
+      }
+      const peers = Object.values(next).filter(
+        (n) => n.boardId === source.boardId
+      );
+      const cloned: BoardGroupNode = {
+        ...source,
+        id: uid(),
+        label: `${source.label ?? "Untitled beat"} COPY`,
+        order: sourceOrder + 1,
+        z: peers.length,
+        // arrays must be cloned so they don't share refs
+        excludedClipIds: source.excludedClipIds
+          ? [...source.excludedClipIds]
+          : undefined,
+        tags: source.tags ? { ...source.tags } : undefined,
+      };
+      next[cloned.id] = cloned;
+      db.putOne("boardNodes", cloned);
+      set({ boardNodes: next });
+      return cloned;
+    },
+    reorderBeat(id, direction) {
+      const node = get().boardNodes[id];
+      if (!node || node.kind !== "group") return;
+      const boardId = node.boardId;
+      const beats = Object.values(get().boardNodes)
+        .filter(
+          (n): n is BoardGroupNode => n.boardId === boardId && n.kind === "group"
+        )
+        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+      const idx = beats.findIndex((b) => b.id === id);
+      if (idx < 0) return;
+      const swapIdx = idx + direction;
+      if (swapIdx < 0 || swapIdx >= beats.length) return;
+      get().pushBoardHistory();
+      const a = beats[idx];
+      const b = beats[swapIdx];
+      const ao = a.order ?? idx;
+      const bo = b.order ?? swapIdx;
+      const ua: BoardGroupNode = { ...a, order: bo };
+      const ub: BoardGroupNode = { ...b, order: ao };
+      set({
+        boardNodes: {
+          ...get().boardNodes,
+          [a.id]: ua,
+          [b.id]: ub,
+        },
+      });
+      db.putOne("boardNodes", ua);
+      db.putOne("boardNodes", ub);
     },
     createRectNode(boardId, x, y, w, h) {
       get().pushBoardHistory();

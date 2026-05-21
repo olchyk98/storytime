@@ -46,7 +46,11 @@ export function GroupModal() {
 
   const groupClips = useMemo(() => {
     if (!node || node.kind !== "group") return [];
-    return sortClips(clipsMatchingGroup(clips, node.tags), node.sort);
+    const excluded = new Set(node.excludedClipIds ?? []);
+    const matches = clipsMatchingGroup(clips, node.tags).filter(
+      (c) => !excluded.has(c.id)
+    );
+    return sortClips(matches, node.sort);
   }, [node, clips]);
 
   const activeSort = SORT_OPTIONS.find((o) => o.key === groupSort)!;
@@ -84,10 +88,10 @@ export function GroupModal() {
     <div className="fixed inset-0 z-40 bg-ink-950/85 backdrop-blur-sm flex flex-col fade-in">
       <header className="px-5 py-3 border-b border-ink-800 flex items-center gap-3">
         <div className="flex-1 min-w-0">
-          <div className="text-xs uppercase tracking-wider text-ink-400">Group</div>
+          <div className="text-xs uppercase tracking-wider text-ink-400">Beat</div>
           <div className="flex items-center gap-2">
             <div className="font-medium text-ink-50 truncate">
-              {node.label ?? "Group"}
+              {node.label ?? "Untitled beat"}
             </div>
             {tagChips.map((t, i) => (
               <span

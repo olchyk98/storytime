@@ -33,10 +33,14 @@ export type BoardGroupSort = "name-asc" | "name-desc" | "date-desc" | "date-asc"
 
 export interface BoardGroupNode extends BoardNodeBase {
   kind: "group";
-  // Groups are saved filters: a clip is "in" the group if it matches all
+  // Beats are saved filters: a clip is "in" the beat if it matches all
   // (levelId -> valueId) pairs in `tags`. Empty/absent tags = matches every clip.
   tags?: Record<LevelId, LevelValueId>;
   sort?: BoardGroupSort;
+  // Position in the beat sequence. Lower comes first.
+  order?: number;
+  // Clip ids explicitly excluded from this beat even if they match the filter.
+  excludedClipIds?: ClipId[];
 }
 
 export interface BoardRectNode extends BoardNodeBase {

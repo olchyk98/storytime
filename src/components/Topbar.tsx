@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { LayoutGrid, Loader2, ScanLine } from "lucide-react";
+import { LayoutGrid, Loader2, Workflow } from "lucide-react";
 import { useStore } from "../state/store";
 import { fmtBytes } from "../lib/format";
 
@@ -25,8 +25,8 @@ export function Topbar() {
         <ToggleBtn
           active={viewMode === "board"}
           onClick={switchToBoard}
-          icon={<ScanLine className="size-3.5" />}
-          label="Board"
+          icon={<Workflow className="size-3.5" />}
+          label="Beats"
         />
       </div>
 
