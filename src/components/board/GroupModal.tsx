@@ -1,8 +1,29 @@
-import { useMemo } from "react";
-import { X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import clsx from "clsx";
+import {
+  ArrowDownAZ,
+  ArrowUpAZ,
+  CalendarArrowDown,
+  CalendarArrowUp,
+  Check,
+  ChevronDown,
+  X,
+} from "lucide-react";
 import { useStore } from "../../state/store";
 import { ClipCard } from "../ClipCard";
-import { clipsMatchingGroup } from "./BoardNode";
+import { clipsMatchingGroup, sortClips } from "./BoardNode";
+import type { BoardGroupSort } from "../../types";
+
+const SORT_OPTIONS: {
+  key: BoardGroupSort;
+  label: string;
+  icon: typeof ArrowDownAZ;
+}[] = [
+  { key: "name-asc", label: "Name A → Z", icon: ArrowDownAZ },
+  { key: "name-desc", label: "Name Z → A", icon: ArrowUpAZ },
+  { key: "date-desc", label: "Newest first", icon: CalendarArrowDown },
+  { key: "date-asc", label: "Oldest first", icon: CalendarArrowUp },
+];
 
 export function GroupModal() {
   const {
@@ -13,16 +34,37 @@ export function GroupModal() {
     openPreview,
     levels,
     levelValues,
+    updateBoardNode,
+    pushBoardHistory,
   } = useStore();
+  const [sortOpen, setSortOpen] = useState(false);
 
   const node = groupModalId ? boardNodes[groupModalId] : null;
 
+  const groupSort: BoardGroupSort =
+    (node?.kind === "group" ? node.sort : undefined) ?? "name-asc";
+
   const groupClips = useMemo(() => {
     if (!node || node.kind !== "group") return [];
-    return clipsMatchingGroup(clips, node.tags).sort((a, b) =>
-      a.name.localeCompare(b.name, undefined, { numeric: true })
-    );
+    return sortClips(clipsMatchingGroup(clips, node.tags), node.sort);
   }, [node, clips]);
+
+  const activeSort = SORT_OPTIONS.find((o) => o.key === groupSort)!;
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        if (
+          e.target instanceof HTMLInputElement ||
+          e.target instanceof HTMLTextAreaElement
+        )
+          return;
+        closeGroupModal();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [closeGroupModal]);
 
   const tagChips = useMemo(() => {
     if (!node || node.kind !== "group" || !node.tags) return [];
@@ -62,6 +104,56 @@ export function GroupModal() {
             </span>
           </div>
         </div>
+
+        <div className="relative">
+          <button
+            onClick={() => setSortOpen((o) => !o)}
+            className="h-9 px-3 rounded-lg border border-ink-800 hover:border-ink-700 text-ink-100 hover:text-ink-50 text-xs inline-flex items-center gap-1.5 transition"
+          >
+            <activeSort.icon className="size-3.5" />
+            {activeSort.label}
+            <ChevronDown
+              className={clsx("size-3 transition", sortOpen && "rotate-180")}
+            />
+          </button>
+          {sortOpen && (
+            <>
+              <div
+                className="fixed inset-0 z-10"
+                onClick={() => setSortOpen(false)}
+              />
+              <div className="absolute right-0 top-10 z-20 w-48 rounded-lg bg-ink-850 border border-ink-700 shadow-xl shadow-ink-950/60 p-1 pop-in">
+                {SORT_OPTIONS.map((o) => {
+                  const Icon = o.icon;
+                  const active = o.key === groupSort;
+                  return (
+                    <button
+                      key={o.key}
+                      onClick={() => {
+                        if (node && node.kind === "group" && o.key !== groupSort) {
+                          pushBoardHistory();
+                          updateBoardNode(node.id, { sort: o.key });
+                        }
+                        setSortOpen(false);
+                      }}
+                      className={clsx(
+                        "w-full flex items-center gap-2 px-2 py-1.5 rounded text-left text-sm transition",
+                        active
+                          ? "bg-ink-700 text-ink-50"
+                          : "hover:bg-ink-700 text-ink-100"
+                      )}
+                    >
+                      <Icon className="size-3.5 text-ink-300" />
+                      <span className="flex-1">{o.label}</span>
+                      {active && <Check className="size-3.5 text-accent-300" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+
         <button
           onClick={closeGroupModal}
           className="size-9 rounded-md hover:bg-ink-800 text-ink-200 hover:text-ink-50 flex items-center justify-center"

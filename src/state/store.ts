@@ -79,6 +79,9 @@ interface StoreState {
   boardTool: BoardTool;
   boardSelectedIds: Set<string>;
   groupModalId: string | null;
+  boardHistory: BoardNode[][];
+  boardFuture: BoardNode[][];
+  boardClipboard: BoardNode[];
   scan: ScanState;
   previewClipId?: string;
   needsPermission: boolean;
@@ -155,6 +158,11 @@ interface StoreState {
   clearBoardSelection: () => void;
   openGroupModal: (id: string) => void;
   closeGroupModal: () => void;
+  pushBoardHistory: () => void;
+  undoBoard: () => void;
+  redoBoard: () => void;
+  copySelectedBoardNodes: () => void;
+  pasteBoardClipboard: () => void;
 
   // backup
   exportBackup: () => BackupPayload;
@@ -239,6 +247,9 @@ export const useStore = create<StoreState>((set, get) => {
     boardTool: "select" as BoardTool,
     boardSelectedIds: new Set<string>(),
     groupModalId: null,
+    boardHistory: [],
+    boardFuture: [],
+    boardClipboard: [],
     scan: { active: false, count: 0 },
     needsPermission: false,
     fileCache: new Map(),
@@ -896,6 +907,7 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     createGroupNode(boardId, x, y, w, h) {
+      get().pushBoardHistory();
       const peers = Object.values(get().boardNodes).filter((n) => n.boardId === boardId);
       const z = peers.length;
       const n: BoardGroupNode = {
@@ -918,6 +930,7 @@ export const useStore = create<StoreState>((set, get) => {
       return n;
     },
     createRectNode(boardId, x, y, w, h) {
+      get().pushBoardHistory();
       const peers = Object.values(get().boardNodes).filter((n) => n.boardId === boardId);
       const z = peers.length;
       const n: BoardRectNode = {
@@ -940,6 +953,7 @@ export const useStore = create<StoreState>((set, get) => {
       return n;
     },
     createTextNode(boardId, x, y) {
+      get().pushBoardHistory();
       const peers = Object.values(get().boardNodes).filter((n) => n.boardId === boardId);
       const z = peers.length;
       const n: BoardTextNode = {
@@ -963,6 +977,7 @@ export const useStore = create<StoreState>((set, get) => {
       return n;
     },
     createArrowNode(boardId, x1, y1, x2, y2, fromNodeId, toNodeId) {
+      get().pushBoardHistory();
       const peers = Object.values(get().boardNodes).filter((n) => n.boardId === boardId);
       const z = peers.length;
       // x/y/w/h serve as a bbox for hit-test / move purposes.
@@ -1002,6 +1017,7 @@ export const useStore = create<StoreState>((set, get) => {
       db.putOne("boardNodes", u);
     },
     deleteBoardNodes(ids) {
+      get().pushBoardHistory();
       const next = { ...get().boardNodes };
       for (const id of ids) {
         if (next[id]) {
@@ -1032,6 +1048,127 @@ export const useStore = create<StoreState>((set, get) => {
     },
     closeGroupModal() {
       set({ groupModalId: null });
+    },
+
+    pushBoardHistory() {
+      const snapshot = Object.values(get().boardNodes).map((n) => ({ ...n }));
+      const next = [...get().boardHistory, snapshot];
+      if (next.length > 50) next.shift();
+      set({ boardHistory: next, boardFuture: [] });
+    },
+    undoBoard() {
+      const history = [...get().boardHistory];
+      if (history.length === 0) return;
+      const past = history.pop()!;
+      const current = Object.values(get().boardNodes).map((n) => ({ ...n }));
+      const future = [...get().boardFuture, current];
+      // Apply snapshot
+      const pastMap: Record<string, BoardNode> = {};
+      for (const n of past) pastMap[n.id] = n;
+      // DB sync: delete current nodes not in past; upsert past nodes
+      const currentIds = new Set(current.map((n) => n.id));
+      const pastIds = new Set(past.map((n) => n.id));
+      for (const id of currentIds) {
+        if (!pastIds.has(id)) db.deleteOne("boardNodes", id);
+      }
+      for (const n of past) db.putOne("boardNodes", n);
+      // Filter selection to ids that still exist
+      const nextSel = new Set<string>();
+      for (const id of get().boardSelectedIds) if (pastMap[id]) nextSel.add(id);
+      set({
+        boardNodes: pastMap,
+        boardHistory: history,
+        boardFuture: future,
+        boardSelectedIds: nextSel,
+      });
+    },
+    redoBoard() {
+      const future = [...get().boardFuture];
+      if (future.length === 0) return;
+      const ahead = future.pop()!;
+      const current = Object.values(get().boardNodes).map((n) => ({ ...n }));
+      const history = [...get().boardHistory, current];
+      const aheadMap: Record<string, BoardNode> = {};
+      for (const n of ahead) aheadMap[n.id] = n;
+      const currentIds = new Set(current.map((n) => n.id));
+      const aheadIds = new Set(ahead.map((n) => n.id));
+      for (const id of currentIds) {
+        if (!aheadIds.has(id)) db.deleteOne("boardNodes", id);
+      }
+      for (const n of ahead) db.putOne("boardNodes", n);
+      const nextSel = new Set<string>();
+      for (const id of get().boardSelectedIds) if (aheadMap[id]) nextSel.add(id);
+      set({
+        boardNodes: aheadMap,
+        boardHistory: history,
+        boardFuture: future,
+        boardSelectedIds: nextSel,
+      });
+    },
+
+    copySelectedBoardNodes() {
+      const ids = get().boardSelectedIds;
+      if (ids.size === 0) return;
+      const snapshot: BoardNode[] = [];
+      for (const id of ids) {
+        const n = get().boardNodes[id];
+        if (n) snapshot.push({ ...n });
+      }
+      set({ boardClipboard: snapshot });
+    },
+    pasteBoardClipboard() {
+      const clipboard = get().boardClipboard;
+      if (clipboard.length === 0) return;
+      const boardId = get().currentBoardId;
+      if (!boardId) return;
+      // snapshot for undo BEFORE applying
+      get().pushBoardHistory();
+
+      const peers = Object.values(get().boardNodes).filter((n) => n.boardId === boardId);
+      let z = peers.length;
+      const idMap: Record<string, string> = {};
+      for (const n of clipboard) idMap[n.id] = uid();
+
+      const offset = 24;
+      const next: Record<string, BoardNode> = { ...get().boardNodes };
+      const newIds: string[] = [];
+
+      for (const old of clipboard) {
+        const newId = idMap[old.id];
+        let newNode: BoardNode;
+        const base = { id: newId, boardId, parentId: null, z: z++ };
+        if (old.kind === "arrow") {
+          newNode = {
+            ...old,
+            ...base,
+            x: old.x + offset,
+            y: old.y + offset,
+            x1: old.x1 + offset,
+            y1: old.y1 + offset,
+            x2: old.x2 + offset,
+            y2: old.y2 + offset,
+            // Remap attachments only if both ends were copied too
+            fromNodeId:
+              old.fromNodeId && idMap[old.fromNodeId]
+                ? idMap[old.fromNodeId]
+                : undefined,
+            toNodeId:
+              old.toNodeId && idMap[old.toNodeId]
+                ? idMap[old.toNodeId]
+                : undefined,
+          };
+        } else if (old.kind === "group") {
+          newNode = { ...old, ...base, x: old.x + offset, y: old.y + offset };
+        } else if (old.kind === "rect") {
+          newNode = { ...old, ...base, x: old.x + offset, y: old.y + offset };
+        } else if (old.kind === "text") {
+          newNode = { ...old, ...base, x: old.x + offset, y: old.y + offset };
+        } else continue;
+        next[newId] = newNode;
+        newIds.push(newId);
+        db.putOne("boardNodes", newNode);
+      }
+      set({ boardNodes: next, boardSelectedIds: new Set(newIds) });
     },
 
     exportBackup() {

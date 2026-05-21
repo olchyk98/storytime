@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
 import clsx from "clsx";
 import { Expand, Filter } from "lucide-react";
-import type { BoardNode as BoardNodeT, Clip } from "../../types";
+import type { BoardGroupSort, BoardNode as BoardNodeT, Clip } from "../../types";
 import { useStore } from "../../state/store";
 import { SearchableSelect } from "../SearchableSelect";
+import { GroupSortMenu } from "./GroupSortMenu";
 
 interface Props {
   node: BoardNodeT;
@@ -80,6 +81,25 @@ export function clipsMatchingGroup(
   });
 }
 
+export function sortClips(clips: Clip[], sort: BoardGroupSort | undefined) {
+  const arr = [...clips];
+  switch (sort ?? "name-asc") {
+    case "name-asc":
+      arr.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+      break;
+    case "name-desc":
+      arr.sort((a, b) => b.name.localeCompare(a.name, undefined, { numeric: true }));
+      break;
+    case "date-desc":
+      arr.sort((a, b) => b.lastModified - a.lastModified);
+      break;
+    case "date-asc":
+      arr.sort((a, b) => a.lastModified - b.lastModified);
+      break;
+  }
+  return arr;
+}
+
 function GroupView({
   node,
   selected,
@@ -98,6 +118,7 @@ function GroupView({
     updateBoardNode,
     addValue,
     openGroupModal,
+    pushBoardHistory,
   } = useStore();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(node.label ?? "");
@@ -107,12 +128,10 @@ function GroupView({
     [levels]
   );
 
-  const groupClips = useMemo(() => {
-    const matches = clipsMatchingGroup(clips, node.tags);
-    return matches.sort((a, b) =>
-      a.name.localeCompare(b.name, undefined, { numeric: true })
-    );
-  }, [clips, node.tags]);
+  const groupClips = useMemo(
+    () => sortClips(clipsMatchingGroup(clips, node.tags), node.sort),
+    [clips, node.tags, node.sort]
+  );
 
   const hasFilter = !!(node.tags && Object.keys(node.tags).length > 0);
 
@@ -149,7 +168,11 @@ function GroupView({
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onBlur={() => {
-              updateBoardNode(node.id, { label: draft.trim() || "Group" });
+              const final = draft.trim() || "Group";
+              if (final !== (node.label ?? "")) {
+                pushBoardHistory();
+                updateBoardNode(node.id, { label: final });
+              }
               setEditing(false);
             }}
             onKeyDown={(e) => {
@@ -183,6 +206,14 @@ function GroupView({
         >
           {groupClips.length}
         </span>
+        <GroupSortMenu
+          value={node.sort ?? "name-asc"}
+          compact
+          onChange={(s) => {
+            pushBoardHistory();
+            updateBoardNode(node.id, { sort: s });
+          }}
+        />
         <button
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => {
@@ -222,6 +253,7 @@ function GroupView({
                   emptyLabel={`No ${l.name.toLowerCase()} values yet`}
                   onCreate={(name) => {
                     const v = addValue(l.id, name);
+                    pushBoardHistory();
                     updateBoardNode(node.id, {
                       tags: { ...(node.tags ?? {}), [l.id]: v.id },
                     });
@@ -232,6 +264,7 @@ function GroupView({
                     const newTags = { ...(node.tags ?? {}) };
                     if (valueId) newTags[l.id] = valueId;
                     else delete newTags[l.id];
+                    pushBoardHistory();
                     updateBoardNode(node.id, { tags: newTags });
                   }}
                 />
@@ -311,7 +344,7 @@ function TextView({
   onPointerDown: (e: React.PointerEvent) => void;
   onResizeHandleDown: (e: React.PointerEvent) => void;
 }) {
-  const { updateBoardNode } = useStore();
+  const { updateBoardNode, pushBoardHistory } = useStore();
   const [editing, setEditing] = useState(node.text.length === 0);
   const [draft, setDraft] = useState(node.text);
   const fontSize = node.fontSize ?? 20;
@@ -342,7 +375,10 @@ function TextView({
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={() => {
-            updateBoardNode(node.id, { text: draft });
+            if (draft !== node.text) {
+              pushBoardHistory();
+              updateBoardNode(node.id, { text: draft });
+            }
             setEditing(false);
           }}
           onKeyDown={(e) => {

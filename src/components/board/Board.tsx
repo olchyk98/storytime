@@ -42,6 +42,11 @@ export function Board() {
     selectBoardNodes,
     clearBoardSelection,
     ensureBoard,
+    pushBoardHistory,
+    undoBoard,
+    redoBoard,
+    copySelectedBoardNodes,
+    pasteBoardClipboard,
   } = useStore();
 
   useEffect(() => {
@@ -76,6 +81,40 @@ export function Board() {
     function down(e: KeyboardEvent) {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)
         return;
+
+      const mod = e.metaKey || e.ctrlKey;
+
+      // Undo / redo
+      if (mod && (e.key === "z" || e.key === "Z")) {
+        e.preventDefault();
+        if (e.shiftKey) redoBoard();
+        else undoBoard();
+        return;
+      }
+      if (mod && (e.key === "y" || e.key === "Y")) {
+        e.preventDefault();
+        redoBoard();
+        return;
+      }
+      // Copy / paste
+      if (mod && (e.key === "c" || e.key === "C")) {
+        e.preventDefault();
+        copySelectedBoardNodes();
+        return;
+      }
+      if (mod && (e.key === "v" || e.key === "V")) {
+        e.preventDefault();
+        pasteBoardClipboard();
+        return;
+      }
+      // Duplicate
+      if (mod && (e.key === "d" || e.key === "D")) {
+        e.preventDefault();
+        copySelectedBoardNodes();
+        pasteBoardClipboard();
+        return;
+      }
+
       if (e.code === "Space") {
         e.preventDefault();
         setSpaceHeld(true);
@@ -103,7 +142,16 @@ export function Board() {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
     };
-  }, [boardSelectedIds, deleteBoardNodes, clearBoardSelection, setBoardTool]);
+  }, [
+    boardSelectedIds,
+    deleteBoardNodes,
+    clearBoardSelection,
+    setBoardTool,
+    undoBoard,
+    redoBoard,
+    copySelectedBoardNodes,
+    pasteBoardClipboard,
+  ]);
 
   // Wheel = pan; ctrl/meta+wheel = zoom around cursor
   useEffect(() => {
@@ -335,6 +383,7 @@ export function Board() {
       const dx = cur.x - start.x;
       const dy = cur.y - start.y;
       if (!moved && Math.abs(dx) + Math.abs(dy) < 3 / board.zoom) return;
+      if (!moved) pushBoardHistory();
       moved = true;
       for (const id of ids) {
         const o = origin[id];
@@ -381,6 +430,7 @@ export function Board() {
     );
     const ow = node.w;
     const oh = node.h;
+    let snapshotted = false;
     const onMove = (ev: PointerEvent) => {
       const cur = clientToWorld(
         ev.clientX,
@@ -392,6 +442,10 @@ export function Board() {
       );
       const dx = cur.x - start.x;
       const dy = cur.y - start.y;
+      if (!snapshotted) {
+        pushBoardHistory();
+        snapshotted = true;
+      }
       updateBoardNode(node.id, {
         w: Math.max(MIN_NODE_SIZE, ow + dx),
         h: Math.max(MIN_NODE_SIZE, oh + dy),

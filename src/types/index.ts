@@ -29,11 +29,14 @@ export interface BoardNodeBase {
   color?: string;
 }
 
+export type BoardGroupSort = "name-asc" | "name-desc" | "date-desc" | "date-asc";
+
 export interface BoardGroupNode extends BoardNodeBase {
   kind: "group";
   // Groups are saved filters: a clip is "in" the group if it matches all
   // (levelId -> valueId) pairs in `tags`. Empty/absent tags = matches every clip.
   tags?: Record<LevelId, LevelValueId>;
+  sort?: BoardGroupSort;
 }
 
 export interface BoardRectNode extends BoardNodeBase {
