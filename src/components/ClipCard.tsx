@@ -5,6 +5,7 @@ import type { Clip } from "../types";
 import { useStore } from "../state/store";
 import { fmtBytes, fmtDuration, fmtLongDate } from "../lib/format";
 import { setActiveHover, subscribeHover } from "../lib/hoverPreview";
+import { useDragSelect } from "../lib/useDragSelect";
 
 const HOVER_DELAY_MS = 220;
 
@@ -24,6 +25,7 @@ export function ClipCard({ clip, onOpen }: { clip: Clip; onOpen: () => void }) {
     selectRangeTo,
   } = useStore();
   const [hoverPlaying, setHoverPlaying] = useState(false);
+  const drag = useDragSelect(clip.id);
 
   const isSelected = selectedClipIds.has(clip.id);
 
@@ -90,6 +92,8 @@ export function ClipCard({ clip, onOpen }: { clip: Clip; onOpen: () => void }) {
   useEffect(() => () => teardownHover(), []);
 
   function onMouseEnter() {
+    drag.onMouseEnter();
+    if (useStore.getState().dragSelecting) return;
     if (clip.thumbFailed) return;
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
     hoverTimer.current = window.setTimeout(async () => {
@@ -126,6 +130,10 @@ export function ClipCard({ clip, onOpen }: { clip: Clip; onOpen: () => void }) {
   }
 
   function handleClick(e: React.MouseEvent) {
+    if (drag.suppressClickRef.current) {
+      e.preventDefault();
+      return;
+    }
     if (e.shiftKey) {
       e.preventDefault();
       selectRangeTo(clip.id);
@@ -158,8 +166,9 @@ export function ClipCard({ clip, onOpen }: { clip: Clip; onOpen: () => void }) {
       )}
     >
       <div
+        onMouseDown={drag.onMouseDown}
         onClick={handleClick}
-        className="block w-full relative aspect-video bg-ink-950 overflow-hidden cursor-pointer"
+        className="block w-full relative aspect-video bg-ink-950 overflow-hidden cursor-pointer select-none"
         title={clip.name}
       >
         {clip.thumb ? (

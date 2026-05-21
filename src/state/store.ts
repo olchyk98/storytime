@@ -30,6 +30,7 @@ interface StoreState {
   selection: Selection;
   selectedClipIds: Set<string>;
   lastClickedClipId?: string;
+  dragSelecting: boolean;
   scan: ScanState;
   previewClipId?: string;
   needsPermission: boolean;
@@ -88,6 +89,9 @@ interface StoreState {
   selectRangeTo: (id: string) => void;
   clearSelection: () => void;
   selectAllVisible: () => void;
+  beginDragSelect: (id: string) => void;
+  dragSelectEnter: (id: string) => void;
+  endDragSelect: () => void;
 
   // preview
   openPreview: (id: string) => void;
@@ -147,6 +151,7 @@ export const useStore = create<StoreState>((set, get) => {
     levelValues: {},
     selection: { kind: "all" },
     selectedClipIds: new Set<string>(),
+    dragSelecting: false,
     scan: { active: false, count: 0 },
     needsPermission: false,
     fileCache: new Map(),
@@ -725,6 +730,26 @@ export const useStore = create<StoreState>((set, get) => {
     selectAllVisible() {
       const ids = get().visibleClips().map((c) => c.id);
       set({ selectedClipIds: new Set(ids) });
+    },
+    beginDragSelect(id) {
+      const next = new Set(get().selectedClipIds);
+      next.add(id);
+      set({
+        dragSelecting: true,
+        selectedClipIds: next,
+        lastClickedClipId: id,
+      });
+    },
+    dragSelectEnter(id) {
+      if (!get().dragSelecting) return;
+      if (get().selectedClipIds.has(id)) return;
+      const next = new Set(get().selectedClipIds);
+      next.add(id);
+      set({ selectedClipIds: next, lastClickedClipId: id });
+    },
+    endDragSelect() {
+      if (!get().dragSelecting) return;
+      set({ dragSelecting: false });
     },
   };
 });

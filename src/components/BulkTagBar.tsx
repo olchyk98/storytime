@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { X } from "lucide-react";
+import { CheckCheck, X } from "lucide-react";
 import { useStore } from "../state/store";
 import { SearchableSelect } from "./SearchableSelect";
 
@@ -12,6 +12,8 @@ export function BulkTagBar() {
     tagClips,
     addValue,
     clearSelection,
+    selectAllVisible,
+    visibleClips,
   } = useStore();
 
   const sortedLevels = useMemo(
@@ -22,12 +24,26 @@ export function BulkTagBar() {
   if (selectedClipIds.size === 0) return null;
 
   const ids = [...selectedClipIds];
+  const visible = visibleClips();
+  const allVisibleSelected =
+    visible.length > 0 && visible.every((c) => selectedClipIds.has(c.id));
 
   return (
     <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-3 py-2 rounded-2xl bg-ink-850 border border-ink-700 shadow-2xl shadow-ink-950/70 pop-in">
       <span className="text-sm font-medium text-ink-50 pl-1 pr-1">
         {ids.length} selected
       </span>
+      <button
+        onClick={selectAllVisible}
+        disabled={allVisibleSelected}
+        className="h-8 px-2.5 rounded-md border border-ink-700 hover:border-ink-600 text-ink-200 hover:text-ink-50 text-xs inline-flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed transition"
+        title="Select all in current view (⌘A)"
+      >
+        <CheckCheck className="size-3.5" />
+        {allVisibleSelected
+          ? `All ${visible.length} selected`
+          : `Select all ${visible.length}`}
+      </button>
       <span className="w-px h-6 bg-ink-700" />
 
       {sortedLevels.length === 0 ? (

@@ -5,6 +5,7 @@ import type { Clip } from "../types";
 import { useStore } from "../state/store";
 import { fmtBytes, fmtDuration } from "../lib/format";
 import { setActiveHover, subscribeHover } from "../lib/hoverPreview";
+import { useDragSelect } from "../lib/useDragSelect";
 
 const HOVER_DELAY_MS = 220;
 
@@ -24,6 +25,7 @@ export function ClipRow({ clip, onOpen }: { clip: Clip; onOpen: () => void }) {
     selectRangeTo,
   } = useStore();
   const [hoverPlaying, setHoverPlaying] = useState(false);
+  const drag = useDragSelect(clip.id);
 
   const isSelected = selectedClipIds.has(clip.id);
 
@@ -90,6 +92,8 @@ export function ClipRow({ clip, onOpen }: { clip: Clip; onOpen: () => void }) {
   useEffect(() => () => teardownHover(), []);
 
   function onMouseEnter() {
+    drag.onMouseEnter();
+    if (useStore.getState().dragSelecting) return;
     if (clip.thumbFailed) return;
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
     hoverTimer.current = window.setTimeout(async () => {
@@ -126,6 +130,10 @@ export function ClipRow({ clip, onOpen }: { clip: Clip; onOpen: () => void }) {
   }
 
   function handleClick(e: React.MouseEvent) {
+    if (drag.suppressClickRef.current) {
+      e.preventDefault();
+      return;
+    }
     if (e.shiftKey) {
       e.preventDefault();
       selectRangeTo(clip.id);
@@ -148,11 +156,12 @@ export function ClipRow({ clip, onOpen }: { clip: Clip; onOpen: () => void }) {
   return (
     <div
       ref={ref}
+      onMouseDown={drag.onMouseDown}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       onClick={handleClick}
       className={clsx(
-        "group flex items-center gap-3 px-3 py-2 rounded-lg border transition cursor-pointer pop-in",
+        "group flex items-center gap-3 px-3 py-2 rounded-lg border transition cursor-pointer pop-in select-none",
         isSelected
           ? "border-accent-400 bg-accent-400/10 ring-1 ring-accent-400/40"
           : "border-ink-800 hover:border-ink-700 bg-ink-900/60 hover:bg-ink-900"
