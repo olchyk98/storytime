@@ -24,12 +24,14 @@ import type { BoardGroupSort, Clip } from "../../types";
 interface Props {
   // null = creating new, string = editing existing
   beatId: string | null;
+  // If creating new, where on the board the beat should be placed.
+  initialPosition?: { x: number; y: number };
   onClose: () => void;
 }
 
 const DRAG_THRESHOLD_PX = 6;
 
-export function BeatEditor({ beatId, onClose }: Props) {
+export function BeatEditor({ beatId, initialPosition, onClose }: Props) {
   const {
     boardNodes,
     levels,
@@ -127,6 +129,8 @@ export function BeatEditor({ beatId, onClose }: Props) {
         label: cleanName,
         tags: cleanTags,
         excludedClipIds: cleanExcluded,
+        x: initialPosition?.x,
+        y: initialPosition?.y,
       });
       if (sort !== "name-asc") updateBoardNode(b.id, { sort });
     }

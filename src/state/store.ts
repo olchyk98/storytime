@@ -16,6 +16,7 @@ import type {
 import * as db from "../lib/db";
 import { ensurePermission, getFileByPath, scanDirectory } from "../lib/fs";
 import { extractThumb } from "../lib/thumbs";
+import { computeAutoLayout } from "../lib/beatLayout";
 
 export interface BackupPayload {
   version: 1;
@@ -146,10 +147,12 @@ interface StoreState {
       label: string;
       tags?: Record<string, string[]>;
       excludedClipIds?: string[];
+      x?: number;
+      y?: number;
     }
   ) => BoardGroupNode;
   reorderBeat: (id: string, direction: -1 | 1) => void;
-  cloneBeat: (id: string) => BoardGroupNode | null;
+  cloneBeat: (id: string, opts?: { defaultDx?: number }) => BoardGroupNode | null;
   connectBeats: (fromId: string, toId: string) => boolean;
   disconnectBeats: (fromId: string, toId: string) => void;
   createRectNode: (boardId: string, x: number, y: number, w: number, h: number) => BoardRectNode;
@@ -332,6 +335,37 @@ export const useStore = create<StoreState>((set, get) => {
             await db.putOne("boardNodes", updated);
           }
           localStorage.setItem(GRAPH_MIGRATION_KEY, "done");
+        }
+      } catch {}
+
+      // Migration v4: switch beats from auto-DAG layout (recomputed every
+      // render) to manual positions stored on each beat. Persist whatever
+      // the auto-DAG produced for the current data so nothing visually moves.
+      const MANUAL_LAYOUT_KEY = "storytime.beatsManualLayout.v1";
+      try {
+        if (localStorage.getItem(MANUAL_LAYOUT_KEY) !== "done") {
+          const groupBeats = Object.values(boardNodeMap).filter(
+            (n): n is BoardGroupNode => n.kind === "group"
+          );
+          if (groupBeats.length > 0) {
+            const positions = computeAutoLayout(
+              groupBeats,
+              levelMap,
+              valueMap,
+              clipMap
+            );
+            for (const p of positions) {
+              const beat = boardNodeMap[p.beat.id] as BoardGroupNode;
+              const updated: BoardGroupNode = {
+                ...beat,
+                x: p.x,
+                y: p.y,
+              };
+              boardNodeMap[beat.id] = updated;
+              await db.putOne("boardNodes", updated);
+            }
+          }
+          localStorage.setItem(MANUAL_LAYOUT_KEY, "done");
         }
       } catch {}
 
@@ -1028,8 +1062,8 @@ export const useStore = create<StoreState>((set, get) => {
         boardId,
         parentId: null,
         kind: "group",
-        x: 0,
-        y: 0,
+        x: params.x ?? 0,
+        y: params.y ?? 0,
         w: 260,
         h: 200,
         z: peers.length,
@@ -1037,12 +1071,13 @@ export const useStore = create<StoreState>((set, get) => {
         tags: params.tags,
         excludedClipIds: params.excludedClipIds,
         order: maxOrder + 1,
+        nextIds: [],
       };
       set({ boardNodes: { ...get().boardNodes, [n.id]: n } });
       db.putOne("boardNodes", n);
       return n;
     },
-    cloneBeat(id) {
+    cloneBeat(id, opts) {
       const source = get().boardNodes[id];
       if (!source || source.kind !== "group") return null;
       get().pushBoardHistory();
@@ -1053,19 +1088,47 @@ export const useStore = create<StoreState>((set, get) => {
         (m, n) => Math.max(m, (n as BoardGroupNode).order ?? 0),
         0
       );
+
+      // Direction inheritance: place the clone in the same relative direction
+      // from `source` that `source` sits from its first parent.
+      let dx: number;
+      let dy: number;
+      let parent: BoardGroupNode | null = null;
+      for (const n of Object.values(get().boardNodes)) {
+        if (n.kind === "group" && (n.nextIds ?? []).includes(source.id)) {
+          parent = n;
+          break;
+        }
+      }
+      if (parent) {
+        dx = source.x - parent.x;
+        dy = source.y - parent.y;
+      } else {
+        // No parent — default to "place to the right" using source's own width
+        // (best estimate available without canvas math here).
+        dx = (opts?.defaultDx ?? (source.w || 280) + 80);
+        dy = 0;
+      }
+      // Snap to grid so manual drags and clone offsets stay tidy.
+      const SNAP = 12;
+      const snap = (v: number) => Math.round(v / SNAP) * SNAP;
+      const newX = snap(source.x + dx);
+      const newY = snap(source.y + dy);
+
       const cloned: BoardGroupNode = {
         ...source,
         id: uid(),
         label: `${source.label ?? "Untitled beat"} COPY`,
         order: maxOrder + 1,
         z: peers.length,
+        x: newX,
+        y: newY,
         excludedClipIds: source.excludedClipIds
           ? [...source.excludedClipIds]
           : undefined,
         tags: source.tags ? { ...source.tags } : undefined,
-        nextIds: [], // clone is a fresh leaf
+        nextIds: [],
       };
-      // Source gets the clone appended to its nextIds (branches if it already had children).
       const updatedSource: BoardGroupNode = {
         ...source,
         nextIds: [...(source.nextIds ?? []), cloned.id],

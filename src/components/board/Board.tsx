@@ -3,104 +3,23 @@ import clsx from "clsx";
 import { Copy, Download, Expand, Pencil, Plus, Workflow } from "lucide-react";
 import { useStore } from "../../state/store";
 import { downloadBackup } from "../../lib/downloadBackup";
-import type { BoardGroupNode, Clip, Level, LevelValue } from "../../types";
+import type { BoardGroupNode } from "../../types";
 import { BeatEditor } from "./BeatEditor";
 import { clipsMatchingGroup, sortClips } from "../../lib/beatFilter";
+import {
+  BEAT_HEIGHT,
+  beatWidthFor,
+  snapToGrid,
+} from "../../lib/beatLayout";
 
-const BEAT_MIN_WIDTH = 280;
-const BEAT_MAX_WIDTH = 540;
-const BEAT_HEIGHT = 220;
-const GAP_X = 80;
-const GAP_Y = 56;
 const MIN_ZOOM = 0.3;
 const MAX_ZOOM = 2.5;
-const PADDING = 60;
-
-const HEADER_CHROME_WIDTH = 20 + 3 * 24 + 4 * 6 + 24; // number + 3 buttons + gaps + px
-const LABEL_PADDING = 18;
-const LABEL_FONT =
-  '500 14px -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "Segoe UI", Roboto, ui-sans-serif, sans-serif';
-
-let measureCtx: CanvasRenderingContext2D | null = null;
-const labelWidthCache = new Map<string, number>();
-
-function measureLabelWidth(label: string): number {
-  if (!label) return 0;
-  const cached = labelWidthCache.get(label);
-  if (cached !== undefined) return cached;
-  if (!measureCtx) {
-    if (typeof document === "undefined") return label.length * 8;
-    const canvas = document.createElement("canvas");
-    measureCtx = canvas.getContext("2d");
-    if (measureCtx) measureCtx.font = LABEL_FONT;
-  }
-  const w = measureCtx ? measureCtx.measureText(label).width : label.length * 8;
-  labelWidthCache.set(label, w);
-  return w;
-}
-
-// Chip text renders at 10px medium. We can approximate from the 14px canvas
-// measure to avoid maintaining a second canvas.
-function chipWidth(name: string): number {
-  const textW = measureLabelWidth(name) * (10 / 14);
-  return Math.ceil(12 + textW); // 12px horizontal padding
-}
-
-function countAreaWidth(includedCount: number, excludedCount: number): number {
-  // Mirrors what the card actually renders.
-  const text =
-    String(includedCount) +
-    (excludedCount > 0 ? ` (−${excludedCount})` : "");
-  // ~6px per mono char at 10px + some margin.
-  return Math.ceil(text.length * 6 + 16);
-}
-
-function chipsRowWidth(
-  beat: BoardGroupNode,
-  levels: Record<string, Level>,
-  levelValues: Record<string, LevelValue>,
-  countArea: number
-): number {
-  if (!beat.tags) return 0;
-  const names: string[] = [];
-  for (const [lid, vids] of Object.entries(beat.tags)) {
-    if (!levels[lid]) continue;
-    for (const vid of vids) {
-      const v = levelValues[vid];
-      if (v) names.push(v.name);
-    }
-  }
-  if (names.length === 0) return 0;
-  const chipsTotal = names.reduce((a, n) => a + chipWidth(n), 0);
-  const gaps = (names.length - 1) * 4;
-  const containerPadding = 24; // px-3 on the row
-  return chipsTotal + gaps + containerPadding + countArea;
-}
-
-function beatWidthFor(
-  beat: BoardGroupNode,
-  levels: Record<string, Level>,
-  levelValues: Record<string, LevelValue>,
-  includedCount: number,
-  excludedCount: number
-) {
-  const labelWidth = measureLabelWidth(beat.label ?? "");
-  const labelBasedWidth = HEADER_CHROME_WIDTH + labelWidth + LABEL_PADDING;
-  const countArea = countAreaWidth(includedCount, excludedCount);
-  const chipBased = chipsRowWidth(beat, levels, levelValues, countArea);
-  const desired = Math.max(labelBasedWidth, chipBased);
-  return Math.min(
-    BEAT_MAX_WIDTH,
-    Math.max(BEAT_MIN_WIDTH, Math.ceil(desired))
-  );
-}
 
 interface BeatLayout {
   beat: BoardGroupNode;
   x: number;
   y: number;
   width: number;
-  rank: number;
 }
 
 interface PendingConnection {
@@ -141,7 +60,9 @@ export function Board() {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [editingBeatId, setEditingBeatId] = useState<string | null>(null);
-  const [creatingBeat, setCreatingBeat] = useState(false);
+  const [creatingBeat, setCreatingBeat] = useState<
+    null | { x: number; y: number }
+  >(null);
   const [pendingConn, setPendingConn] = useState<PendingConnection | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<{
     from: string;
@@ -151,6 +72,27 @@ export function Board() {
   useEffect(() => {
     if (!currentBoardId) ensureBoard();
   }, [currentBoardId, ensureBoard]);
+
+  function startCreatingBeat() {
+    if (!board) {
+      setCreatingBeat({ x: 0, y: 0 });
+      return;
+    }
+    const rect = surfaceRef.current?.getBoundingClientRect();
+    if (!rect) {
+      setCreatingBeat({ x: 0, y: 0 });
+      return;
+    }
+    // Center of the visible viewport in world coords
+    const cx = rect.width / 2;
+    const cy = rect.height / 2;
+    const worldX = (cx - board.panX) / board.zoom;
+    const worldY = (cy - board.panY) / board.zoom;
+    setCreatingBeat({
+      x: snapToGrid(worldX - 140),
+      y: snapToGrid(worldY - BEAT_HEIGHT / 2),
+    });
+  }
 
   const beats = useMemo(() => {
     if (!board) return [] as BoardGroupNode[];
@@ -162,7 +104,7 @@ export function Board() {
 
   const clips = useStore((s) => s.clips);
   const layout: BeatLayout[] = useMemo(
-    () => computeLayout(beats, levels, levelValues, clips),
+    () => buildLayout(beats, levels, levelValues, clips),
     [beats, levels, levelValues, clips]
   );
 
@@ -197,7 +139,7 @@ export function Board() {
         setSpaceHeld(true);
       } else if (e.key === "n" || e.key === "N") {
         e.preventDefault();
-        setCreatingBeat(true);
+        startCreatingBeat();
       } else if (e.key === "Escape") {
         setPendingConn(null);
         setSelectedEdge(null);
@@ -373,7 +315,7 @@ export function Board() {
           Save backup
         </button>
         <button
-          onClick={() => setCreatingBeat(true)}
+          onClick={startCreatingBeat}
           className="h-10 px-4 rounded-lg bg-accent-400 hover:bg-accent-300 text-ink-950 font-medium text-sm inline-flex items-center gap-2 shadow-lg shadow-accent-400/20 transition"
           title="Add beat (N)"
         >
@@ -428,6 +370,7 @@ export function Board() {
               y={l.y}
               width={l.width}
               isConnectHoverTarget={pendingConn?.hoverTargetId === l.beat.id}
+              zoom={board.zoom}
               onEdit={() => setEditingBeatId(l.beat.id)}
               onConnectStart={(e) => onConnectStart(e, l.beat.id)}
             />
@@ -449,7 +392,7 @@ export function Board() {
                 beat.
               </p>
               <button
-                onClick={() => setCreatingBeat(true)}
+                onClick={startCreatingBeat}
                 className="mt-5 h-10 px-5 rounded-lg bg-accent-400 hover:bg-accent-300 text-ink-950 font-medium text-sm inline-flex items-center gap-2"
               >
                 <Plus className="size-4" /> Add your first beat
@@ -469,8 +412,9 @@ export function Board() {
       {(creatingBeat || editingBeatId) && (
         <BeatEditor
           beatId={editingBeatId}
+          initialPosition={creatingBeat ?? undefined}
           onClose={() => {
-            setCreatingBeat(false);
+            setCreatingBeat(null);
             setEditingBeatId(null);
           }}
         />
@@ -479,101 +423,25 @@ export function Board() {
   );
 }
 
-function computeLayout(
+function buildLayout(
   beats: BoardGroupNode[],
-  levels: Record<string, Level>,
-  levelValues: Record<string, LevelValue>,
-  clips: Record<string, Clip>
+  levels: Record<string, import("../../types").Level>,
+  levelValues: Record<string, import("../../types").LevelValue>,
+  clips: Record<string, import("../../types").Clip>
 ): BeatLayout[] {
-  if (beats.length === 0) return [];
-  // Build parent map for rank calculation.
-  const parents = new Map<string, string[]>();
-  for (const b of beats) parents.set(b.id, []);
-  for (const b of beats) {
-    for (const nid of b.nextIds ?? []) {
-      if (parents.has(nid)) parents.get(nid)!.push(b.id);
-    }
-  }
-
-  // Rank = max(parent rank) + 1, fixed-point iteration.
-  const ranks = new Map<string, number>();
-  for (const b of beats) ranks.set(b.id, 0);
-  let changed = true;
-  let iterations = 0;
-  const maxIter = beats.length + 2;
-  while (changed && iterations < maxIter) {
-    changed = false;
-    iterations++;
-    for (const b of beats) {
-      const ps = parents.get(b.id) ?? [];
-      const newRank =
-        ps.length === 0 ? 0 : Math.max(...ps.map((p) => ranks.get(p) ?? 0)) + 1;
-      if (newRank !== ranks.get(b.id)) {
-        ranks.set(b.id, newRank);
-        changed = true;
-      }
-    }
-  }
-
-  // Group by rank.
-  const byRank = new Map<number, BoardGroupNode[]>();
-  for (const b of beats) {
-    const r = ranks.get(b.id) ?? 0;
-    if (!byRank.has(r)) byRank.set(r, []);
-    byRank.get(r)!.push(b);
-  }
-  // Stable sort within rank: by order, then label.
-  for (const arr of byRank.values()) {
-    arr.sort((a, b) => {
-      const ao = a.order ?? 0;
-      const bo = b.order ?? 0;
-      if (ao !== bo) return ao - bo;
-      return (a.label ?? "").localeCompare(b.label ?? "");
-    });
-  }
-
-  // Cache per-beat width using current clip counts.
-  const widthByBeatId = new Map<string, number>();
-  function widthOf(b: BoardGroupNode): number {
-    const cached = widthByBeatId.get(b.id);
-    if (cached !== undefined) return cached;
+  return beats.map((b) => {
     const matching = clipsMatchingGroup(clips, b.tags);
     const excludedSet = new Set(b.excludedClipIds ?? []);
-    const included = matching.filter((c) => !excludedSet.has(c.id));
-    const w = beatWidthFor(b, levels, levelValues, included.length, excludedSet.size);
-    widthByBeatId.set(b.id, w);
-    return w;
-  }
-
-  // Column x positions are cumulative on rank widths.
-  const sortedRanks = [...byRank.keys()].sort((a, b) => a - b);
-  const colWidthByRank = new Map<number, number>();
-  for (const r of sortedRanks) {
-    const w = Math.max(...byRank.get(r)!.map(widthOf));
-    colWidthByRank.set(r, w);
-  }
-  const colXByRank = new Map<number, number>();
-  let x = PADDING;
-  for (const r of sortedRanks) {
-    colXByRank.set(r, x);
-    x += colWidthByRank.get(r)! + GAP_X;
-  }
-
-  const layout: BeatLayout[] = [];
-  for (const r of sortedRanks) {
-    const arr = byRank.get(r)!;
-    const cx = colXByRank.get(r)!;
-    arr.forEach((b, i) => {
-      layout.push({
-        beat: b,
-        x: cx,
-        y: PADDING + i * (BEAT_HEIGHT + GAP_Y),
-        width: widthOf(b),
-        rank: r,
-      });
-    });
-  }
-  return layout;
+    const includedCount = matching.filter((c) => !excludedSet.has(c.id)).length;
+    const width = beatWidthFor(
+      b,
+      levels,
+      levelValues,
+      includedCount,
+      excludedSet.size
+    );
+    return { beat: b, x: b.x, y: b.y, width };
+  });
 }
 
 function BeatCard({
@@ -582,6 +450,7 @@ function BeatCard({
   y,
   width,
   isConnectHoverTarget,
+  zoom,
   onEdit,
   onConnectStart,
 }: {
@@ -590,11 +459,67 @@ function BeatCard({
   y: number;
   width: number;
   isConnectHoverTarget: boolean;
+  zoom: number;
   onEdit: () => void;
   onConnectStart: (e: React.PointerEvent) => void;
 }) {
-  const { clips, levels, levelValues, openGroupModal, cloneBeat, boardNodes } =
-    useStore();
+  const {
+    clips,
+    levels,
+    levelValues,
+    openGroupModal,
+    cloneBeat,
+    boardNodes,
+    updateBoardNode,
+    pushBoardHistory,
+  } = useStore();
+  const suppressClickRef = useRef(false);
+
+  function onHeaderPointerDown(e: React.PointerEvent) {
+    if (e.button !== 0) return;
+    // Buttons inside the header have their own handlers — let them through.
+    const target = e.target as HTMLElement;
+    if (target.closest("button")) return;
+    const startClientX = e.clientX;
+    const startClientY = e.clientY;
+    const startX = beat.x;
+    const startY = beat.y;
+    let started = false;
+    const onMove = (ev: PointerEvent) => {
+      const dx = (ev.clientX - startClientX) / zoom;
+      const dy = (ev.clientY - startClientY) / zoom;
+      if (!started) {
+        if (Math.abs(ev.clientX - startClientX) + Math.abs(ev.clientY - startClientY) < 4)
+          return;
+        started = true;
+        pushBoardHistory();
+      }
+      updateBoardNode(beat.id, {
+        x: snapToGrid(startX + dx),
+        y: snapToGrid(startY + dy),
+      });
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      if (started) {
+        suppressClickRef.current = true;
+        // Cleared after the imminent synthetic click.
+        setTimeout(() => {
+          suppressClickRef.current = false;
+        }, 0);
+      }
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }
+
+  function onHeaderClickCapture(e: React.MouseEvent) {
+    if (suppressClickRef.current) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+  }
 
   // Compute this beat's "rank index" via the layout-aware count is too heavy;
   // a simple sequence number is just its order field for display.
@@ -655,8 +580,12 @@ function BeatCard({
       )}
       style={{ left: x, top: y, width, height: BEAT_HEIGHT }}
     >
-      {/* Header */}
-      <div className="flex items-center gap-1.5 px-3 py-2 border-b border-ink-800 bg-ink-850/80">
+      {/* Header — drag handle for moving the beat */}
+      <div
+        className="flex items-center gap-1.5 px-3 py-2 border-b border-ink-800 bg-ink-850/80 cursor-grab active:cursor-grabbing select-none"
+        onPointerDown={onHeaderPointerDown}
+        onClickCapture={onHeaderClickCapture}
+      >
         <span className="text-[10px] font-mono text-ink-500 tabular-nums w-5 text-right">
           {indexNumber}
         </span>
@@ -729,7 +658,7 @@ function BeatCard({
               gridAutoRows: "min-content",
             }}
           >
-            {visible.map((c: Clip) => (
+            {visible.map((c) => (
               <div
                 key={c.id}
                 className="aspect-video rounded overflow-hidden bg-ink-950"
