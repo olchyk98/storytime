@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 import { useStore, type BackupPayload, type ImportSummary } from "../state/store";
+import { fmtBytes } from "../lib/format";
 import type { Level, LevelValue } from "../types";
 
 export function LevelsManager({ onClose }: { onClose: () => void }) {
@@ -60,21 +61,51 @@ export function LevelsManager({ onClose }: { onClose: () => void }) {
   >(null);
   const [importPreview, setImportPreview] = useState<BackupPayload | null>(null);
   const [importSummary, setImportSummary] = useState<ImportSummary | null>(null);
+  const [exportSummary, setExportSummary] = useState<{
+    filename: string;
+    levels: number;
+    values: number;
+    taggedClips: number;
+    totalClips: number;
+    bytes: number;
+  } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   function doExport() {
-    const payload = exportBackup();
-    const blob = new Blob([JSON.stringify(payload, null, 2)], {
-      type: "application/json",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    const proj = (meta?.name ?? "storytime").replace(/[^a-z0-9-_]+/gi, "-");
-    a.href = url;
-    a.download = `${proj}-backup-${stamp}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    try {
+      const payload = exportBackup();
+      const json = JSON.stringify(payload, null, 2);
+      const blob = new Blob([json], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      const proj = (meta?.name ?? "storytime").replace(/[^a-z0-9-_]+/gi, "-");
+      const filename = `${proj}-backup-${stamp}.json`;
+      a.href = url;
+      a.download = filename;
+      // Append to DOM for max browser compatibility, then remove.
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      // Defer revoke so the browser has time to start the download.
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+
+      const totalClips = Object.keys(useStore.getState().clips).length;
+      setExportSummary({
+        filename,
+        levels: payload.levels.length,
+        values: payload.levelValues.length,
+        taggedClips: payload.clipTags.length,
+        totalClips,
+        bytes: blob.size,
+      });
+    } catch (err) {
+      console.error(err);
+      alert(
+        "Export failed. Check the browser console — no data was changed. " +
+          "Try again, or reach out with the error message."
+      );
+    }
   }
 
   async function onFilePicked(e: React.ChangeEvent<HTMLInputElement>) {
@@ -84,13 +115,18 @@ export function LevelsManager({ onClose }: { onClose: () => void }) {
     try {
       const text = await file.text();
       const parsed = JSON.parse(text);
-      if (parsed.version !== 1 || !Array.isArray(parsed.levels)) {
+      if (
+        parsed?.version !== 1 ||
+        !Array.isArray(parsed.levels) ||
+        !Array.isArray(parsed.levelValues) ||
+        !Array.isArray(parsed.clipTags)
+      ) {
         alert("This file doesn't look like a Storytime backup.");
         return;
       }
       setImportPreview(parsed as BackupPayload);
     } catch {
-      alert("Could not read that file.");
+      alert("Could not read that file. It may be malformed JSON.");
     }
   }
 
@@ -347,6 +383,13 @@ export function LevelsManager({ onClose }: { onClose: () => void }) {
         <ImportSummaryDialog
           summary={importSummary}
           onClose={() => setImportSummary(null)}
+        />
+      )}
+
+      {exportSummary && (
+        <ExportSummaryDialog
+          summary={exportSummary}
+          onClose={() => setExportSummary(null)}
         />
       )}
     </div>
@@ -622,6 +665,107 @@ function ImportSummaryDialog({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function ExportSummaryDialog({
+  summary,
+  onClose,
+}: {
+  summary: {
+    filename: string;
+    levels: number;
+    values: number;
+    taggedClips: number;
+    totalClips: number;
+    bytes: number;
+  };
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-[60] bg-ink-950/75 backdrop-blur-sm flex items-center justify-center p-6 fade-in"
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-[440px] rounded-xl bg-ink-900 border border-ink-700 shadow-2xl shadow-ink-950/80 p-5 pop-in"
+      >
+        <div className="flex items-start gap-3 mb-4">
+          <div className="size-9 rounded-lg bg-sage-500/20 text-sage-400 flex items-center justify-center shrink-0">
+            <Download className="size-4" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="font-medium text-ink-50">Backup saved</div>
+            <div
+              className="text-[12px] font-mono text-ink-300 mt-0.5 truncate"
+              title={summary.filename}
+            >
+              {summary.filename}
+            </div>
+
+            <div className="text-sm text-ink-200 mt-3 space-y-1 leading-snug">
+              <SummaryRow
+                label="Levels"
+                value={summary.levels.toString()}
+              />
+              <SummaryRow
+                label="Values"
+                value={summary.values.toString()}
+              />
+              <SummaryRow
+                label="Tagged clips captured"
+                value={`${summary.taggedClips} of ${summary.totalClips}`}
+                tone={summary.taggedClips > 0 ? "sage" : "muted"}
+              />
+              <SummaryRow label="File size" value={fmtBytes(summary.bytes)} />
+            </div>
+
+            <div className="text-[12px] text-ink-400 mt-3 leading-snug">
+              Saved to your browser's default Downloads folder. Drag this file
+              somewhere safe (iCloud, Dropbox, a backups folder) — IndexedDB
+              data can be cleared by browser maintenance.
+            </div>
+          </div>
+        </div>
+        <div className="flex justify-end">
+          <button
+            onClick={onClose}
+            className="h-9 px-4 rounded-lg bg-accent-400 hover:bg-accent-300 text-ink-950 font-medium text-sm transition"
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SummaryRow({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: "sage" | "muted";
+}) {
+  return (
+    <div className="flex items-baseline justify-between">
+      <span className="text-ink-400">{label}</span>
+      <span
+        className={clsx(
+          "font-mono",
+          tone === "sage"
+            ? "text-sage-400"
+            : tone === "muted"
+            ? "text-ink-400"
+            : "text-ink-50"
+        )}
+      >
+        {value}
+      </span>
     </div>
   );
 }
