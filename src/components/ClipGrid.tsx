@@ -28,7 +28,11 @@ const SORT_OPTIONS: { key: SortKey; label: string; icon: typeof ArrowDownAZ }[] 
   { key: "date-asc", label: "Oldest first", icon: CalendarArrowUp },
 ];
 
-function selectionTitle(s: Selection, levelName?: string, valueName?: string) {
+function selectionTitle(
+  s: Selection,
+  levelName?: string,
+  filterParts?: { levelName: string; valueName: string }[]
+) {
   switch (s.kind) {
     case "all":
       return { kicker: "Project", title: "All clips" };
@@ -36,8 +40,22 @@ function selectionTitle(s: Selection, levelName?: string, valueName?: string) {
       return { kicker: "Inbox", title: "New since last scan" };
     case "untagged":
       return { kicker: levelName ?? "Level", title: "Untagged" };
-    case "level-value":
-      return { kicker: levelName ?? "Level", title: valueName ?? "—" };
+    case "filter": {
+      const parts = filterParts ?? [];
+      if (parts.length === 0)
+        return { kicker: "Filter", title: "—" };
+      if (parts.length === 1)
+        return {
+          kicker: parts[0].levelName,
+          title: parts[0].valueName,
+        };
+      return {
+        kicker: "Filter",
+        title: parts
+          .map((p) => `${p.levelName}: ${p.valueName}`)
+          .join(" · "),
+      };
+    }
     case "folder-day":
       return { kicker: "Folder", title: s.day === "_" ? "(root)" : s.day };
     case "folder-event":
@@ -98,15 +116,23 @@ export function ClipGrid() {
   const activeSort = SORT_OPTIONS.find((o) => o.key === sort)!;
 
   const levelName =
-    selection.kind === "untagged" || selection.kind === "level-value"
+    selection.kind === "untagged"
       ? levels[selection.levelId]?.name
       : undefined;
-  const valueName =
-    selection.kind === "level-value"
-      ? levelValues[selection.valueId]?.name
+  const filterParts =
+    selection.kind === "filter"
+      ? Object.entries(selection.tags)
+          .map(([lid, vid]) => {
+            const l = levels[lid];
+            const v = levelValues[vid];
+            return l && v ? { levelName: l.name, valueName: v.name } : null;
+          })
+          .filter((p): p is { levelName: string; valueName: string } =>
+            Boolean(p)
+          )
       : undefined;
 
-  const header = selectionTitle(selection, levelName, valueName);
+  const header = selectionTitle(selection, levelName, filterParts);
   const totalSize = items.reduce((s, c) => s + c.size, 0);
   const newCount = items.filter((c) => c.isNew).length;
 
@@ -293,8 +319,8 @@ function EmptyState({ selection }: { selection: Selection }) {
   if (selection.kind === "new") msg = "No new files since last scan. Try Re-scan up top.";
   if (selection.kind === "untagged")
     msg = "Every clip at this level is tagged. Nice.";
-  if (selection.kind === "level-value")
-    msg = "No clips tagged with this value yet. Select some clips and tag them.";
+  if (selection.kind === "filter")
+    msg = "No clips match this combination of tags yet.";
   if (
     selection.kind === "folder-day" ||
     selection.kind === "folder-event" ||

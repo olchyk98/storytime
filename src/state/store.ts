@@ -48,7 +48,8 @@ export type Selection =
   | { kind: "all" }
   | { kind: "new" }
   | { kind: "untagged"; levelId: string }
-  | { kind: "level-value"; levelId: string; valueId: string }
+  // Multi-level AND filter: one value per level. Clip must match each entry.
+  | { kind: "filter"; tags: Record<string, string> }
   | { kind: "folder-day"; day: string }
   | { kind: "folder-event"; day: string; event: string }
   | { kind: "folder-source"; day: string; event: string; source: string };
@@ -770,9 +771,18 @@ export const useStore = create<StoreState>((set, get) => {
         case "untagged":
           out = arr.filter((c) => !c.tags?.[selection.levelId]);
           break;
-        case "level-value":
-          out = arr.filter((c) => c.tags?.[selection.levelId] === selection.valueId);
+        case "filter": {
+          const entries = Object.entries(selection.tags);
+          if (entries.length === 0) break;
+          out = arr.filter((c) => {
+            if (!c.tags) return false;
+            for (const [lid, vid] of entries) {
+              if (c.tags[lid] !== vid) return false;
+            }
+            return true;
+          });
           break;
+        }
         case "folder-day":
           out = arr.filter((c) => c.day === selection.day);
           break;
@@ -838,8 +848,12 @@ export const useStore = create<StoreState>((set, get) => {
       for (const vid of removedValueIds) db.deleteOne("levelValues", vid);
       // reset selection if it pointed at this level
       const s = get().selection;
-      if ((s.kind === "level-value" || s.kind === "untagged") && s.levelId === id) {
+      if (s.kind === "untagged" && s.levelId === id) {
         set({ selection: { kind: "all" } });
+      } else if (s.kind === "filter" && s.tags[id]) {
+        const { [id]: _, ...rest } = s.tags;
+        if (Object.keys(rest).length === 0) set({ selection: { kind: "all" } });
+        else set({ selection: { kind: "filter", tags: rest } });
       }
     },
     countClipsTaggedAtLevel(levelId) {
@@ -900,8 +914,16 @@ export const useStore = create<StoreState>((set, get) => {
       set({ levelValues: rest, clips: nextClips });
       db.deleteOne("levelValues", id);
       const s = get().selection;
-      if (s.kind === "level-value" && s.valueId === id) {
-        set({ selection: { kind: "all" } });
+      if (s.kind === "filter") {
+        const dirty = Object.entries(s.tags).some(([, vid]) => vid === id);
+        if (dirty) {
+          const nextTags: Record<string, string> = {};
+          for (const [lid, vid] of Object.entries(s.tags))
+            if (vid !== id) nextTags[lid] = vid;
+          if (Object.keys(nextTags).length === 0)
+            set({ selection: { kind: "all" } });
+          else set({ selection: { kind: "filter", tags: nextTags } });
+        }
       }
     },
     countClipsTaggedWithValue(valueId) {

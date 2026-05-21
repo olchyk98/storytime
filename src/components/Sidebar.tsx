@@ -218,32 +218,37 @@ export function Sidebar({
                           No values yet.
                         </div>
                       ) : (
-                        values.map((v) => (
-                          <Row
-                            key={v.id}
-                            icon={
-                              <span
-                                className="size-2.5 rounded-full shrink-0"
-                                style={{ backgroundColor: v.color }}
-                              />
-                            }
-                            label={v.name}
-                            count={valueCount(v.id, l.id)}
-                            dense
-                            selected={isSelected({
-                              kind: "level-value",
-                              levelId: l.id,
-                              valueId: v.id,
-                            })}
-                            onClick={() =>
-                              setSelection({
-                                kind: "level-value",
-                                levelId: l.id,
-                                valueId: v.id,
-                              })
-                            }
-                          />
-                        ))
+                        values.map((v) => {
+                          const filterTags =
+                            selection.kind === "filter" ? selection.tags : {};
+                          const active = filterTags[l.id] === v.id;
+                          return (
+                            <Row
+                              key={v.id}
+                              icon={
+                                <span
+                                  className="size-2.5 rounded-full shrink-0"
+                                  style={{ backgroundColor: v.color }}
+                                />
+                              }
+                              label={v.name}
+                              count={valueCount(v.id, l.id)}
+                              dense
+                              selected={active}
+                              onClick={() => {
+                                const next: Record<string, string> = {
+                                  ...filterTags,
+                                };
+                                if (active) delete next[l.id];
+                                else next[l.id] = v.id;
+                                if (Object.keys(next).length === 0)
+                                  setSelection({ kind: "all" });
+                                else
+                                  setSelection({ kind: "filter", tags: next });
+                              }}
+                            />
+                          );
+                        })
                       )}
                       <Row
                         icon={<Filter className="size-3 text-ink-500" />}

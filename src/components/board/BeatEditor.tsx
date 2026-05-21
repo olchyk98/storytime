@@ -521,8 +521,14 @@ function BeatTile({
           alt=""
           draggable={false}
           className={clsx(
-            "size-full object-cover pointer-events-none",
-            excluded && "opacity-30 grayscale"
+            "size-full object-cover pointer-events-none transition-opacity duration-200",
+            // Fade the still thumb out while the hover-video is playing,
+            // so we don't stack two visuals.
+            hover.hoverPlaying
+              ? "opacity-0"
+              : excluded
+              ? "opacity-30 grayscale"
+              : ""
           )}
         />
       ) : (
@@ -536,8 +542,7 @@ function BeatTile({
         preload="none"
         className={clsx(
           "absolute inset-0 size-full object-cover pointer-events-none transition-opacity duration-200",
-          hover.hoverPlaying && !excluded ? "opacity-100" : "opacity-0",
-          excluded && "grayscale opacity-30"
+          hover.hoverPlaying ? "opacity-100" : "opacity-0"
         )}
       />
       <div className="absolute inset-x-0 bottom-0 px-1.5 py-1 bg-gradient-to-t from-ink-950/90 to-transparent text-[10px] text-ink-50 truncate pointer-events-none">
