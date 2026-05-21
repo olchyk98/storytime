@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { useStore } from "../../state/store";
 import { ClipCard } from "../ClipCard";
-import { clipsMatchingGroup, sortClips } from "./BoardNode";
+import { clipsMatchingGroup, sortClips } from "../../lib/beatFilter";
 import type { BoardGroupSort } from "../../types";
 
 const SORT_OPTIONS: {
@@ -73,11 +73,14 @@ export function GroupModal() {
   const tagChips = useMemo(() => {
     if (!node || node.kind !== "group" || !node.tags) return [];
     const out: { levelName: string; valueName: string; color: string }[] = [];
-    for (const [lid, vid] of Object.entries(node.tags)) {
+    for (const [lid, vids] of Object.entries(node.tags)) {
       const l = levels[lid];
-      const v = levelValues[vid];
-      if (!l || !v) continue;
-      out.push({ levelName: l.name, valueName: v.name, color: v.color });
+      if (!l) continue;
+      for (const vid of vids as string[]) {
+        const v = levelValues[vid];
+        if (!v) continue;
+        out.push({ levelName: l.name, valueName: v.name, color: v.color });
+      }
     }
     return out;
   }, [node, levels, levelValues]);

@@ -1,10 +1,13 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
+  Clock,
   Download,
   GripVertical,
+  History,
   Plus,
+  RotateCcw,
   Settings2,
   Trash2,
   Upload,
@@ -13,6 +16,7 @@ import {
 import clsx from "clsx";
 import { useStore, type BackupPayload, type ImportSummary } from "../state/store";
 import { fmtBytes } from "../lib/format";
+import { getAllSnapshots, deleteSnapshot, type SnapshotRecord } from "../lib/db";
 import type { Level, LevelValue } from "../types";
 
 export function LevelsManager({ onClose }: { onClose: () => void }) {
@@ -206,6 +210,8 @@ export function LevelsManager({ onClose }: { onClose: () => void }) {
         </header>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          <SnapshotsSection />
+
           {sortedLevels.length === 0 && (
             <div className="text-center text-sm text-ink-400 py-8">
               No levels yet. Add one below — e.g. "Day", "Event", "Camera".
@@ -768,4 +774,158 @@ function SummaryRow({
       </span>
     </div>
   );
+}
+
+function SnapshotsSection() {
+  const { lastSnapshotAt, restoreSnapshot } = useStore();
+  const [snapshots, setSnapshots] = useState<SnapshotRecord[]>([]);
+  const [open, setOpen] = useState(false);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getAllSnapshots().then((all) => {
+      if (cancelled) return;
+      all.sort((a, b) => b.timestamp - a.timestamp);
+      setSnapshots(all);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [lastSnapshotAt]);
+
+  const latest = snapshots[0];
+
+  async function onRestore(snap: SnapshotRecord) {
+    await restoreSnapshot(snap);
+    setConfirmId(null);
+  }
+
+  async function onDelete(id: string) {
+    await deleteSnapshot(id);
+    setSnapshots((s) => s.filter((x) => x.id !== id));
+  }
+
+  return (
+    <div className="rounded-xl border border-ink-800 bg-ink-850/60 overflow-hidden">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-ink-850 transition"
+      >
+        <div className="size-7 rounded-lg bg-sage-500/15 text-sage-400 flex items-center justify-center shrink-0">
+          <History className="size-3.5" />
+        </div>
+        <div className="flex-1 text-left">
+          <div className="text-sm font-medium text-ink-50">
+            Automatic snapshots
+          </div>
+          <div className="text-[11px] text-ink-400">
+            {snapshots.length === 0
+              ? "No snapshots yet — they appear automatically after edits."
+              : `${snapshots.length} kept · latest ${formatRelative(
+                  latest?.timestamp ?? 0
+                )}`}
+          </div>
+        </div>
+        <ChevronDown
+          className={clsx(
+            "size-4 text-ink-400 transition",
+            open && "rotate-180"
+          )}
+        />
+      </button>
+
+      {open && (
+        <div className="border-t border-ink-800 px-3 py-2 space-y-1">
+          {snapshots.length === 0 ? (
+            <div className="text-[12px] text-ink-400 py-3 px-1 leading-relaxed">
+              Snapshots are saved automatically every ~12 seconds after you make
+              changes. The most recent 20 are kept here. Use Export above for a
+              file you can save outside the browser.
+            </div>
+          ) : (
+            snapshots.map((s) => (
+              <div
+                key={s.id}
+                className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-ink-900/70"
+              >
+                <Clock className="size-3 text-ink-400 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-[12px] text-ink-100">
+                    {formatRelative(s.timestamp)}
+                  </div>
+                  <div className="text-[10px] text-ink-500 font-mono">
+                    {summarizePayload(s.payload)}
+                  </div>
+                </div>
+                {confirmId === s.id ? (
+                  <>
+                    <button
+                      onClick={() => onRestore(s)}
+                      className="h-7 px-2 rounded-md bg-accent-400 hover:bg-accent-300 text-ink-950 font-medium text-[11px] inline-flex items-center gap-1 transition"
+                    >
+                      <RotateCcw className="size-3" /> Confirm restore
+                    </button>
+                    <button
+                      onClick={() => setConfirmId(null)}
+                      className="h-7 px-2 rounded-md border border-ink-700 hover:border-ink-600 text-ink-200 hover:text-ink-50 text-[11px] transition"
+                    >
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => setConfirmId(s.id)}
+                      className="h-7 px-2 rounded-md border border-ink-700 hover:border-ink-600 text-ink-200 hover:text-ink-50 text-[11px] inline-flex items-center gap-1 transition"
+                      title="Replace current data with this snapshot"
+                    >
+                      <RotateCcw className="size-3" /> Restore
+                    </button>
+                    <button
+                      onClick={() => onDelete(s.id)}
+                      className="size-7 rounded-md hover:bg-rose-500/10 text-ink-500 hover:text-rose-500 flex items-center justify-center transition"
+                      title="Delete snapshot"
+                    >
+                      <Trash2 className="size-3" />
+                    </button>
+                  </>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatRelative(ts: number): string {
+  if (!ts) return "—";
+  const diff = Date.now() - ts;
+  const s = Math.floor(diff / 1000);
+  if (s < 5) return "just now";
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `${d}d ago`;
+  return new Date(ts).toLocaleString(undefined, {
+    dateStyle: "short",
+    timeStyle: "short",
+  });
+}
+
+function summarizePayload(payload: any): string {
+  const parts: string[] = [];
+  if (Array.isArray(payload?.levels)) parts.push(`${payload.levels.length} lvls`);
+  if (Array.isArray(payload?.levelValues))
+    parts.push(`${payload.levelValues.length} vals`);
+  if (Array.isArray(payload?.clipTags))
+    parts.push(`${payload.clipTags.length} tagged`);
+  if (Array.isArray(payload?.boardNodes))
+    parts.push(`${payload.boardNodes.length} nodes`);
+  return parts.join(" · ");
 }

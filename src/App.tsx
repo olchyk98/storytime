@@ -25,6 +25,37 @@ function App() {
     init();
   }, [init]);
 
+  // Auto-snapshot: debounced takeSnapshot whenever the user-curated state
+  // changes. 12s of inactivity → write a rolling backup in IndexedDB.
+  useEffect(() => {
+    if (!ready) return;
+    let timer: number | null = null;
+    const schedule = () => {
+      if (timer !== null) clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        useStore.getState().takeSnapshot().catch(() => {});
+        timer = null;
+      }, 12000);
+    };
+    const unsubscribe = useStore.subscribe((state, prev) => {
+      if (
+        state.clips !== prev.clips ||
+        state.levels !== prev.levels ||
+        state.levelValues !== prev.levelValues ||
+        state.boards !== prev.boards ||
+        state.boardNodes !== prev.boardNodes
+      ) {
+        schedule();
+      }
+    });
+    // Take a baseline snapshot of whatever state we just loaded.
+    schedule();
+    return () => {
+      unsubscribe();
+      if (timer !== null) clearTimeout(timer);
+    };
+  }, [ready]);
+
   if (!ready) {
     return (
       <div className="h-full w-full flex items-center justify-center text-ink-300 text-sm">

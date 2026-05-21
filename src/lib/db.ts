@@ -11,7 +11,15 @@ import type {
 } from "../types";
 
 const DB_NAME = "storytime";
-const DB_VERSION = 3;
+const DB_VERSION = 4;
+
+export interface SnapshotRecord {
+  id: string;
+  timestamp: number;
+  // Stored as a plain object — a BackupPayload, but kept as `any` here to avoid
+  // circular imports from the store.
+  payload: any;
+}
 
 interface Schema {
   meta: { key: string; value: ProjectMeta };
@@ -23,6 +31,7 @@ interface Schema {
   levelValues: { key: string; value: LevelValue };
   boards: { key: string; value: Board };
   boardNodes: { key: string; value: BoardNode };
+  snapshots: { key: string; value: SnapshotRecord };
 }
 
 let dbp: Promise<IDBPDatabase> | null = null;
@@ -40,6 +49,7 @@ function getDB() {
         if (!db.objectStoreNames.contains("levelValues")) db.createObjectStore("levelValues", { keyPath: "id" });
         if (!db.objectStoreNames.contains("boards")) db.createObjectStore("boards", { keyPath: "id" });
         if (!db.objectStoreNames.contains("boardNodes")) db.createObjectStore("boardNodes", { keyPath: "id" });
+        if (!db.objectStoreNames.contains("snapshots")) db.createObjectStore("snapshots", { keyPath: "id" });
       },
     });
   }
@@ -89,4 +99,17 @@ export async function getThumb(id: string): Promise<string | undefined> {
   const db = await getDB();
   const v = await db.get("thumbs", id);
   return (v as any)?.dataUrl;
+}
+
+export async function putSnapshot(s: SnapshotRecord) {
+  const db = await getDB();
+  await db.put("snapshots", s);
+}
+export async function getAllSnapshots(): Promise<SnapshotRecord[]> {
+  const db = await getDB();
+  return (await db.getAll("snapshots")) as SnapshotRecord[];
+}
+export async function deleteSnapshot(id: string) {
+  const db = await getDB();
+  await db.delete("snapshots", id);
 }

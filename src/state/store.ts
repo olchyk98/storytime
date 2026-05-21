@@ -144,12 +144,14 @@ interface StoreState {
     boardId: string,
     params: {
       label: string;
-      tags?: Record<string, string>;
+      tags?: Record<string, string[]>;
       excludedClipIds?: string[];
     }
   ) => BoardGroupNode;
   reorderBeat: (id: string, direction: -1 | 1) => void;
   cloneBeat: (id: string) => BoardGroupNode | null;
+  connectBeats: (fromId: string, toId: string) => boolean;
+  disconnectBeats: (fromId: string, toId: string) => void;
   createRectNode: (boardId: string, x: number, y: number, w: number, h: number) => BoardRectNode;
   createTextNode: (boardId: string, x: number, y: number) => BoardTextNode;
   createArrowNode: (
@@ -180,6 +182,11 @@ interface StoreState {
     payload: BackupPayload,
     opts?: { mode?: "replace" | "merge" }
   ) => Promise<ImportSummary>;
+
+  // automatic in-app rolling snapshots
+  lastSnapshotAt: number;
+  takeSnapshot: () => Promise<void>;
+  restoreSnapshot: (snapshot: db.SnapshotRecord) => Promise<void>;
 
   // multi-select
   selectOnlyClip: (id: string) => void;
@@ -260,6 +267,7 @@ export const useStore = create<StoreState>((set, get) => {
     boardHistory: [],
     boardFuture: [],
     boardClipboard: [],
+    lastSnapshotAt: 0,
     scan: { active: false, count: 0 },
     needsPermission: false,
     fileCache: new Map(),
@@ -304,6 +312,56 @@ export const useStore = create<StoreState>((set, get) => {
           }
         }
         localStorage.setItem(BEATS_MIGRATION_KEY, "done");
+      } catch {}
+
+      // Migration v2: turn the existing linear `order` chain into a DAG by
+      // populating each beat's `nextIds` with the next beat in order. Runs once
+      // per project. New installs are no-ops.
+      const GRAPH_MIGRATION_KEY = "storytime.beatsGraph.v1";
+      try {
+        if (localStorage.getItem(GRAPH_MIGRATION_KEY) !== "done") {
+          const groupBeats = Object.values(boardNodeMap)
+            .filter((n): n is BoardGroupNode => n.kind === "group")
+            .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+          for (let i = 0; i < groupBeats.length; i++) {
+            const beat = groupBeats[i];
+            if (beat.nextIds !== undefined) continue; // already migrated this beat
+            const next = i < groupBeats.length - 1 ? [groupBeats[i + 1].id] : [];
+            const updated: BoardGroupNode = { ...beat, nextIds: next };
+            boardNodeMap[beat.id] = updated;
+            await db.putOne("boardNodes", updated);
+          }
+          localStorage.setItem(GRAPH_MIGRATION_KEY, "done");
+        }
+      } catch {}
+
+      // Migration v3: beat tags shifted from `Record<lid, vid>` to
+      // `Record<lid, vid[]>` to support multi-select filters. Wrap any legacy
+      // string values in single-item arrays.
+      const MULTITAG_MIGRATION_KEY = "storytime.beatsMultiTag.v1";
+      try {
+        if (localStorage.getItem(MULTITAG_MIGRATION_KEY) !== "done") {
+          for (const n of Object.values(boardNodeMap)) {
+            if (n.kind !== "group") continue;
+            if (!n.tags) continue;
+            let dirty = false;
+            const newTags: Record<string, string[]> = {};
+            for (const [lid, val] of Object.entries(n.tags)) {
+              if (Array.isArray(val)) {
+                newTags[lid] = val;
+              } else if (typeof val === "string" && val) {
+                newTags[lid] = [val];
+                dirty = true;
+              }
+            }
+            if (dirty) {
+              const updated: BoardGroupNode = { ...n, tags: newTags };
+              boardNodeMap[n.id] = updated;
+              await db.putOne("boardNodes", updated);
+            }
+          }
+          localStorage.setItem(MULTITAG_MIGRATION_KEY, "done");
+        }
       } catch {}
 
       let needsPerm = false;
@@ -988,38 +1046,38 @@ export const useStore = create<StoreState>((set, get) => {
       const source = get().boardNodes[id];
       if (!source || source.kind !== "group") return null;
       get().pushBoardHistory();
-      const sourceOrder = source.order ?? 0;
-      // Bump every beat that sits at-or-after the source's NEXT slot by 1
-      // so the clone slides in immediately after the original.
-      const next: Record<string, BoardNode> = { ...get().boardNodes };
-      for (const n of Object.values(next)) {
-        if (n.kind !== "group" || n.boardId !== source.boardId) continue;
-        if (n.id === source.id) continue;
-        const o = n.order ?? 0;
-        if (o > sourceOrder) {
-          const u: BoardGroupNode = { ...n, order: o + 1 };
-          next[n.id] = u;
-          db.putOne("boardNodes", u);
-        }
-      }
-      const peers = Object.values(next).filter(
+      const peers = Object.values(get().boardNodes).filter(
         (n) => n.boardId === source.boardId
+      );
+      const maxOrder = peers.reduce(
+        (m, n) => Math.max(m, (n as BoardGroupNode).order ?? 0),
+        0
       );
       const cloned: BoardGroupNode = {
         ...source,
         id: uid(),
         label: `${source.label ?? "Untitled beat"} COPY`,
-        order: sourceOrder + 1,
+        order: maxOrder + 1,
         z: peers.length,
-        // arrays must be cloned so they don't share refs
         excludedClipIds: source.excludedClipIds
           ? [...source.excludedClipIds]
           : undefined,
         tags: source.tags ? { ...source.tags } : undefined,
+        nextIds: [], // clone is a fresh leaf
       };
-      next[cloned.id] = cloned;
+      // Source gets the clone appended to its nextIds (branches if it already had children).
+      const updatedSource: BoardGroupNode = {
+        ...source,
+        nextIds: [...(source.nextIds ?? []), cloned.id],
+      };
+      const nextMap = {
+        ...get().boardNodes,
+        [source.id]: updatedSource,
+        [cloned.id]: cloned,
+      };
+      set({ boardNodes: nextMap });
+      db.putOne("boardNodes", updatedSource);
       db.putOne("boardNodes", cloned);
-      set({ boardNodes: next });
       return cloned;
     },
     reorderBeat(id, direction) {
@@ -1142,6 +1200,19 @@ export const useStore = create<StoreState>((set, get) => {
     deleteBoardNodes(ids) {
       get().pushBoardHistory();
       const next = { ...get().boardNodes };
+      const idSet = new Set(ids);
+      // Clean up nextIds references to deleted beats.
+      for (const n of Object.values(next)) {
+        if (n.kind !== "group") continue;
+        const nexts = n.nextIds;
+        if (!nexts || !nexts.some((nid) => idSet.has(nid))) continue;
+        const updated: BoardGroupNode = {
+          ...n,
+          nextIds: nexts.filter((nid) => !idSet.has(nid)),
+        };
+        next[n.id] = updated;
+        db.putOne("boardNodes", updated);
+      }
       for (const id of ids) {
         if (next[id]) {
           delete next[id];
@@ -1151,6 +1222,49 @@ export const useStore = create<StoreState>((set, get) => {
       const nextSel = new Set(get().boardSelectedIds);
       for (const id of ids) nextSel.delete(id);
       set({ boardNodes: next, boardSelectedIds: nextSel });
+    },
+
+    connectBeats(fromId, toId) {
+      if (fromId === toId) return false;
+      const all = get().boardNodes;
+      const from = all[fromId];
+      const to = all[toId];
+      if (!from || !to || from.kind !== "group" || to.kind !== "group")
+        return false;
+      const currentNexts = from.nextIds ?? [];
+      if (currentNexts.includes(toId)) return false;
+      // Cycle check: walk forward from `toId`; if we reach `fromId`, abort.
+      const visited = new Set<string>();
+      const stack = [toId];
+      while (stack.length) {
+        const id = stack.pop()!;
+        if (id === fromId) return false;
+        if (visited.has(id)) continue;
+        visited.add(id);
+        const n = all[id];
+        if (n && n.kind === "group" && n.nextIds) stack.push(...n.nextIds);
+      }
+      get().pushBoardHistory();
+      const updated: BoardGroupNode = {
+        ...from,
+        nextIds: [...currentNexts, toId],
+      };
+      set({ boardNodes: { ...get().boardNodes, [fromId]: updated } });
+      db.putOne("boardNodes", updated);
+      return true;
+    },
+    disconnectBeats(fromId, toId) {
+      const from = get().boardNodes[fromId];
+      if (!from || from.kind !== "group") return;
+      const nexts = from.nextIds ?? [];
+      if (!nexts.includes(toId)) return;
+      get().pushBoardHistory();
+      const updated: BoardGroupNode = {
+        ...from,
+        nextIds: nexts.filter((id) => id !== toId),
+      };
+      set({ boardNodes: { ...get().boardNodes, [fromId]: updated } });
+      db.putOne("boardNodes", updated);
     },
 
     selectBoardNodes(ids) {
@@ -1292,6 +1406,30 @@ export const useStore = create<StoreState>((set, get) => {
         db.putOne("boardNodes", newNode);
       }
       set({ boardNodes: next, boardSelectedIds: new Set(newIds) });
+    },
+
+    async takeSnapshot() {
+      const payload = get().exportBackup();
+      const snapshot: db.SnapshotRecord = {
+        id: uid(),
+        timestamp: Date.now(),
+        payload,
+      };
+      await db.putSnapshot(snapshot);
+      // Prune to the most recent 20
+      const all = await db.getAllSnapshots();
+      if (all.length > 20) {
+        all.sort((a, b) => b.timestamp - a.timestamp);
+        for (const s of all.slice(20)) {
+          await db.deleteSnapshot(s.id);
+        }
+      }
+      set({ lastSnapshotAt: snapshot.timestamp });
+    },
+    async restoreSnapshot(snapshot) {
+      await get().importBackup(snapshot.payload as BackupPayload, {
+        mode: "replace",
+      });
     },
 
     exportBackup() {
