@@ -1,11 +1,5 @@
 import clsx from "clsx";
-import {
-  ArrowRight,
-  MousePointer2,
-  Square,
-  SquareDashed,
-  Type,
-} from "lucide-react";
+import { MousePointer2, SquareDashedKanban } from "lucide-react";
 import { useStore, type BoardTool } from "../../state/store";
 
 const TOOLS: {
@@ -13,46 +7,25 @@ const TOOLS: {
   label: string;
   hint: string;
   shortcut: string;
-  icon: typeof Square;
+  icon: typeof MousePointer2;
 }[] = [
   {
     key: "select",
     label: "Select",
-    hint: "Move, resize, and tap to open",
+    hint: "Move and edit beats",
     shortcut: "V",
     icon: MousePointer2,
   },
   {
-    key: "group",
-    label: "Group",
-    hint: "Drag to draw a group that holds clips",
-    shortcut: "G",
-    icon: Square,
-  },
-  {
-    key: "rect",
-    label: "Rectangle",
-    hint: "Plain rectangle for visual structure",
-    shortcut: "R",
-    icon: SquareDashed,
-  },
-  {
-    key: "text",
-    label: "Text",
-    hint: "Click to drop a text label",
-    shortcut: "T",
-    icon: Type,
-  },
-  {
-    key: "arrow",
-    label: "Arrow",
-    hint: "Drag between things to connect them",
+    key: "annotation",
+    label: "Annotation",
+    hint: "Drag to draw a labeled region around beats",
     shortcut: "A",
-    icon: ArrowRight,
+    icon: SquareDashedKanban,
   },
 ];
 
-export function BoardToolbar() {
+export function BeatsToolbar() {
   const { boardTool, setBoardTool } = useStore();
   return (
     <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1 p-1 rounded-xl bg-ink-850/90 backdrop-blur border border-ink-700 shadow-xl shadow-ink-950/60">
@@ -72,7 +45,6 @@ export function BoardToolbar() {
             >
               <Icon className="size-4" />
             </button>
-
             <div
               role="tooltip"
               className="absolute left-1/2 -translate-x-1/2 top-[calc(100%+8px)] z-30 pointer-events-none

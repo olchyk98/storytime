@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type {
   Board,
+  BoardAnnotationNode,
   BoardArrowNode,
   BoardGroupNode,
   BoardNode,
@@ -42,7 +43,7 @@ export interface ImportSummary {
 }
 
 export type ViewMode = "grid" | "board";
-export type BoardTool = "select" | "group" | "rect" | "text" | "arrow";
+export type BoardTool = "select" | "annotation";
 
 export type Selection =
   | { kind: "all" }
@@ -158,6 +159,14 @@ interface StoreState {
   disconnectBeats: (fromId: string, toId: string) => void;
   createRectNode: (boardId: string, x: number, y: number, w: number, h: number) => BoardRectNode;
   createTextNode: (boardId: string, x: number, y: number) => BoardTextNode;
+  createAnnotation: (
+    boardId: string,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    label?: string
+  ) => BoardAnnotationNode;
   createArrowNode: (
     boardId: string,
     x1: number,
@@ -1239,6 +1248,34 @@ export const useStore = create<StoreState>((set, get) => {
         boardNodes: { ...get().boardNodes, [n.id]: n },
         boardSelectedIds: new Set([n.id]),
       });
+      db.putOne("boardNodes", n);
+      return n;
+    },
+    createAnnotation(boardId, x, y, w, h, label) {
+      get().pushBoardHistory();
+      const peers = Object.values(get().boardNodes).filter(
+        (n) => n.boardId === boardId
+      );
+      const n: BoardAnnotationNode = {
+        id: uid(),
+        boardId,
+        parentId: null,
+        kind: "annotation",
+        x,
+        y,
+        w,
+        h,
+        // Lowest z so annotations sit BEHIND beats and arrows visually.
+        z: -1,
+        label: label ?? "Section",
+      };
+      set({
+        boardNodes: { ...get().boardNodes, [n.id]: n },
+        boardSelectedIds: new Set([n.id]),
+      });
+      // Compensate the rest's z so the new annotation sorts to the back.
+      // (We just rely on render order: annotations render before beats.)
+      void peers;
       db.putOne("boardNodes", n);
       return n;
     },

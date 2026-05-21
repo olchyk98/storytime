@@ -58,6 +58,14 @@ export interface BoardTextNode extends BoardNodeBase {
   fontSize?: number;
 }
 
+// Unreal Engine "comment" / annotation: bordered region with a header label.
+// Used to visually group beats and label a section of the story.
+export interface BoardAnnotationNode extends BoardNodeBase {
+  kind: "annotation";
+  label: string;
+  color?: string;
+}
+
 // Arrows use endpoints instead of box. We keep x/y/w/h from BoardNodeBase as a
 // derived bounding box for consistency with the others (computed on write).
 export interface BoardArrowNode extends BoardNodeBase {
@@ -74,7 +82,8 @@ export type BoardNode =
   | BoardGroupNode
   | BoardRectNode
   | BoardTextNode
-  | BoardArrowNode;
+  | BoardArrowNode
+  | BoardAnnotationNode;
 
 export interface Level {
   id: LevelId;

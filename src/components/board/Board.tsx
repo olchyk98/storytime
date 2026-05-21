@@ -1,9 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
-import { Copy, Download, Expand, Pencil, Plus, Workflow } from "lucide-react";
+import {
+  Copy,
+  Download,
+  Expand,
+  Maximize,
+  Pencil,
+  Plus,
+  Workflow,
+} from "lucide-react";
 import { useStore } from "../../state/store";
 import { downloadBackup } from "../../lib/downloadBackup";
-import type { BoardGroupNode } from "../../types";
+import type { BoardAnnotationNode, BoardGroupNode } from "../../types";
 import { BeatEditor } from "./BeatEditor";
 import { clipsMatchingGroup, sortClips } from "../../lib/beatFilter";
 import {
@@ -11,6 +19,8 @@ import {
   beatWidthFor,
   snapToGrid,
 } from "../../lib/beatLayout";
+import { BeatsToolbar } from "./BeatsToolbar";
+import { AnnotationCard } from "./AnnotationCard";
 
 const MIN_ZOOM = 0.3;
 const MAX_ZOOM = 2.5;
@@ -54,6 +64,12 @@ export function Board() {
     ensureBoard,
     undoBoard,
     redoBoard,
+    boardTool,
+    setBoardTool,
+    createAnnotation,
+    boardSelectedIds,
+    deleteBoardNodes,
+    clearBoardSelection,
   } = useStore();
 
   const board = currentBoardId ? boards[currentBoardId] : null;
@@ -72,6 +88,35 @@ export function Board() {
   useEffect(() => {
     if (!currentBoardId) ensureBoard();
   }, [currentBoardId, ensureBoard]);
+
+  function fitContent() {
+    if (!board) return;
+    const rect = surfaceRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    // Bounding box of beats + annotations
+    const all: { x: number; y: number; w: number; h: number }[] = [];
+    for (const l of layout)
+      all.push({ x: l.x, y: l.y, w: l.width, h: BEAT_HEIGHT });
+    for (const a of annotations)
+      all.push({ x: a.x, y: a.y, w: a.w, h: a.h });
+    if (all.length === 0) {
+      setBoardViewport(board.id, 0, 0, 1);
+      return;
+    }
+    const minX = Math.min(...all.map((b) => b.x));
+    const minY = Math.min(...all.map((b) => b.y));
+    const maxX = Math.max(...all.map((b) => b.x + b.w));
+    const maxY = Math.max(...all.map((b) => b.y + b.h));
+    const contentW = maxX - minX;
+    const contentH = maxY - minY;
+    const PAD = 80;
+    const zoomX = (rect.width - PAD * 2) / contentW;
+    const zoomY = (rect.height - PAD * 2) / contentH;
+    const zoom = Math.max(0.2, Math.min(1.5, Math.min(zoomX, zoomY)));
+    const panX = (rect.width - contentW * zoom) / 2 - minX * zoom;
+    const panY = (rect.height - contentH * zoom) / 2 - minY * zoom;
+    setBoardViewport(board.id, panX, panY, zoom);
+  }
 
   function startCreatingBeat() {
     if (!board) {
@@ -101,6 +146,19 @@ export function Board() {
         n.boardId === board.id && n.kind === "group"
     );
   }, [boardNodes, board]);
+
+  const annotations = useMemo(() => {
+    if (!board) return [] as BoardAnnotationNode[];
+    return Object.values(boardNodes).filter(
+      (n): n is BoardAnnotationNode =>
+        n.boardId === board.id && n.kind === "annotation"
+    );
+  }, [boardNodes, board]);
+
+  const [draftAnnotation, setDraftAnnotation] = useState<
+    | null
+    | { x: number; y: number; w: number; h: number }
+  >(null);
 
   const clips = useStore((s) => s.clips);
   const layout: BeatLayout[] = useMemo(
@@ -140,9 +198,26 @@ export function Board() {
       } else if (e.key === "n" || e.key === "N") {
         e.preventDefault();
         startCreatingBeat();
+      } else if (e.key === "f" || e.key === "F") {
+        e.preventDefault();
+        fitContent();
+      } else if (e.key === "v" || e.key === "V") {
+        setBoardTool("select");
+      } else if (e.key === "a" || e.key === "A") {
+        setBoardTool("annotation");
+      } else if (
+        (e.key === "Backspace" || e.key === "Delete") &&
+        boardSelectedIds.size > 0
+      ) {
+        // Allow deleting annotation/other selected non-beat nodes via keyboard.
+        e.preventDefault();
+        deleteBoardNodes([...boardSelectedIds]);
       } else if (e.key === "Escape") {
         setPendingConn(null);
         setSelectedEdge(null);
+        setDraftAnnotation(null);
+        setBoardTool("select");
+        clearBoardSelection();
       }
     }
     function up(e: KeyboardEvent) {
@@ -154,7 +229,14 @@ export function Board() {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
     };
-  }, [undoBoard, redoBoard]);
+  }, [
+    undoBoard,
+    redoBoard,
+    setBoardTool,
+    boardSelectedIds,
+    deleteBoardNodes,
+    clearBoardSelection,
+  ]);
 
   // Wheel: pan; ctrl/meta+wheel: zoom
   useEffect(() => {
@@ -192,6 +274,58 @@ export function Board() {
     if (!target.dataset.boardSurface) return;
     setSelectedEdge(null);
 
+    const rect = surfaceRef.current!.getBoundingClientRect();
+
+    // Annotation tool: drag to draw a labeled bordered region.
+    if (boardTool === "annotation") {
+      const start = clientToWorld(
+        e.clientX,
+        e.clientY,
+        rect,
+        board.panX,
+        board.panY,
+        board.zoom
+      );
+      let cur = { x: start.x, y: start.y, w: 0, h: 0 };
+      setDraftAnnotation(cur);
+      const onMove = (ev: PointerEvent) => {
+        const pt = clientToWorld(
+          ev.clientX,
+          ev.clientY,
+          rect,
+          board.panX,
+          board.panY,
+          board.zoom
+        );
+        cur = {
+          x: Math.min(start.x, pt.x),
+          y: Math.min(start.y, pt.y),
+          w: Math.abs(pt.x - start.x),
+          h: Math.abs(pt.y - start.y),
+        };
+        setDraftAnnotation(cur);
+      };
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        const w = Math.max(160, snapToGrid(cur.w));
+        const h = Math.max(100, snapToGrid(cur.h));
+        createAnnotation(
+          board.id,
+          snapToGrid(cur.x),
+          snapToGrid(cur.y),
+          w,
+          h
+        );
+        setDraftAnnotation(null);
+        setBoardTool("select");
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      return;
+    }
+
+    // Default: pan the canvas.
     const startPanX = board.panX;
     const startPanY = board.panY;
     const startClientX = e.clientX;
@@ -296,13 +430,23 @@ export function Board() {
 
   const cursor = spaceHeld
     ? "grab"
-    : pendingConn
+    : pendingConn || boardTool === "annotation"
     ? "crosshair"
     : "default";
 
   return (
     <div className="flex-1 relative min-w-0 min-h-0 overflow-hidden bg-ink-950">
+      <BeatsToolbar />
+
       <div className="absolute top-3 right-3 z-30 flex items-center gap-2">
+        <button
+          onClick={fitContent}
+          className="h-10 px-3 rounded-lg border border-ink-700 hover:border-ink-600 bg-ink-900/80 backdrop-blur text-ink-200 hover:text-ink-50 text-sm inline-flex items-center gap-2 transition"
+          title="Fit all beats into view (F)"
+        >
+          <Maximize className="size-4" />
+          Fit
+        </button>
         <button
           onClick={() => {
             const s = useStore.getState();
@@ -350,6 +494,28 @@ export function Board() {
             transformOrigin: "0 0",
           }}
         >
+          {/* Annotations render BEHIND beats and arrows */}
+          {annotations.map((a) => (
+            <AnnotationCard
+              key={a.id}
+              node={a}
+              selected={boardSelectedIds.has(a.id)}
+              zoom={board.zoom}
+            />
+          ))}
+
+          {draftAnnotation && (
+            <div
+              className="absolute border-2 border-dashed border-accent-400 bg-accent-400/10 rounded-xl pointer-events-none"
+              style={{
+                left: draftAnnotation.x,
+                top: draftAnnotation.y,
+                width: draftAnnotation.w,
+                height: draftAnnotation.h,
+              }}
+            />
+          )}
+
           <GraphArrows
             layout={layout}
             layoutById={layoutById}
