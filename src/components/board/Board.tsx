@@ -23,17 +23,42 @@ const MIN_ZOOM = 0.3;
 const MAX_ZOOM = 2.5;
 const PADDING = 40;
 
-// Reserved by the header's number badge + 5 buttons + paddings around them.
-const HEADER_CHROME_WIDTH = 25 + 6 * 24 + 28;
-// Approx px per char for 14px Inter at medium weight — enough headroom that we
-// rarely truncate. Anything longer than the cap relies on CSS truncation.
-const CHAR_PX = 7.5;
+// Reserved by the header's number badge + 5 buttons + gaps + horizontal padding.
+// Number badge w-5 (20) + 5 buttons size-6 (24 each) + 6 gaps gap-1.5 (6 each) + px-3 (24) = 200
+const HEADER_CHROME_WIDTH = 20 + 5 * 24 + 6 * 6 + 24;
+// Extra breathing room so a fonts-vs-canvas pixel disagreement never ends in
+// an ellipsis.
+const LABEL_PADDING = 18;
+const LABEL_FONT =
+  '500 14px -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "Segoe UI", Roboto, ui-sans-serif, sans-serif';
+
+// Cached canvas context for measureText; created lazily.
+let measureCtx: CanvasRenderingContext2D | null = null;
+const labelWidthCache = new Map<string, number>();
+
+function measureLabelWidth(label: string): number {
+  if (!label) return 0;
+  const cached = labelWidthCache.get(label);
+  if (cached !== undefined) return cached;
+  if (!measureCtx) {
+    if (typeof document === "undefined") return label.length * 8;
+    const canvas = document.createElement("canvas");
+    measureCtx = canvas.getContext("2d");
+    if (measureCtx) measureCtx.font = LABEL_FONT;
+  }
+  const w = measureCtx ? measureCtx.measureText(label).width : label.length * 8;
+  labelWidthCache.set(label, w);
+  return w;
+}
 
 function beatWidthFor(label: string | undefined) {
-  const labelWidth = (label?.length ?? 0) * CHAR_PX;
+  const labelWidth = measureLabelWidth(label ?? "");
   return Math.min(
     BEAT_MAX_WIDTH,
-    Math.max(BEAT_MIN_WIDTH, Math.ceil(HEADER_CHROME_WIDTH + labelWidth))
+    Math.max(
+      BEAT_MIN_WIDTH,
+      Math.ceil(HEADER_CHROME_WIDTH + labelWidth + LABEL_PADDING)
+    )
   );
 }
 
