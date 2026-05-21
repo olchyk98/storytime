@@ -1,5 +1,18 @@
 import { create } from "zustand";
-import type { Bucket, Clip, Level, LevelValue, PlannedShot, ProjectMeta } from "../types";
+import type {
+  Board,
+  BoardArrowNode,
+  BoardCommentNode,
+  BoardGroupNode,
+  BoardNode,
+  BoardRectNode,
+  Bucket,
+  Clip,
+  Level,
+  LevelValue,
+  PlannedShot,
+  ProjectMeta,
+} from "../types";
 import * as db from "../lib/db";
 import { ensurePermission, getFileByPath, scanDirectory } from "../lib/fs";
 import { extractThumb } from "../lib/thumbs";
@@ -15,6 +28,9 @@ export interface BackupPayload {
     path: string[];
     tags: Record<string, string>;
   }[];
+  // Boards added in a later session — optional for older backups.
+  boards?: Board[];
+  boardNodes?: BoardNode[];
 }
 
 export interface ImportSummary {
@@ -23,6 +39,9 @@ export interface ImportSummary {
   taggedClips: number;
   unmatchedClips: number;
 }
+
+export type ViewMode = "grid" | "board";
+export type BoardTool = "select" | "group" | "rect" | "comment" | "arrow";
 
 export type Selection =
   | { kind: "all" }
@@ -51,6 +70,15 @@ interface StoreState {
   selectedClipIds: Set<string>;
   lastClickedClipId?: string;
   dragSelecting: boolean;
+
+  // board / canvas
+  viewMode: ViewMode;
+  boards: Record<string, Board>;
+  boardNodes: Record<string, BoardNode>;
+  currentBoardId: string | null;
+  boardTool: BoardTool;
+  boardSelectedIds: Set<string>;
+  groupModalId: string | null;
   scan: ScanState;
   previewClipId?: string;
   needsPermission: boolean;
@@ -102,6 +130,33 @@ interface StoreState {
   deleteValue: (id: string) => void;
   countClipsTaggedWithValue: (valueId: string) => number;
   tagClips: (clipIds: string[], levelId: string, valueId: string | null) => void;
+
+  // board
+  setViewMode: (m: ViewMode) => void;
+  ensureBoard: () => Promise<string>;
+  setBoardTool: (t: BoardTool) => void;
+  setBoardViewport: (boardId: string, panX: number, panY: number, zoom: number) => void;
+  createGroupNode: (boardId: string, x: number, y: number, w: number, h: number) => BoardGroupNode;
+  createRectNode: (boardId: string, x: number, y: number, w: number, h: number) => BoardRectNode;
+  createCommentNode: (boardId: string, x: number, y: number) => BoardCommentNode;
+  createArrowNode: (
+    boardId: string,
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    fromNodeId?: string,
+    toNodeId?: string
+  ) => BoardArrowNode;
+  updateBoardNode: (id: string, patch: Partial<BoardNode>) => void;
+  deleteBoardNodes: (ids: string[]) => void;
+  selectBoardNodes: (ids: string[]) => void;
+  toggleBoardNodeSelected: (id: string) => void;
+  clearBoardSelection: () => void;
+  addClipToGroup: (groupId: string, clipId: string) => void;
+  removeClipFromGroup: (groupId: string, clipId: string) => void;
+  openGroupModal: (id: string) => void;
+  closeGroupModal: () => void;
 
   // backup
   exportBackup: () => BackupPayload;
@@ -179,6 +234,13 @@ export const useStore = create<StoreState>((set, get) => {
     selection: { kind: "all" },
     selectedClipIds: new Set<string>(),
     dragSelecting: false,
+    viewMode: "grid" as ViewMode,
+    boards: {},
+    boardNodes: {},
+    currentBoardId: null,
+    boardTool: "select" as BoardTool,
+    boardSelectedIds: new Set<string>(),
+    groupModalId: null,
     scan: { active: false, count: 0 },
     needsPermission: false,
     fileCache: new Map(),
@@ -190,6 +252,8 @@ export const useStore = create<StoreState>((set, get) => {
       const planned = await db.getAll<PlannedShot>("planned");
       const levels = await db.getAll<Level>("levels");
       const levelValues = await db.getAll<LevelValue>("levelValues");
+      const boards = await db.getAll<Board>("boards");
+      const boardNodes = await db.getAll<BoardNode>("boardNodes");
 
       const clipMap: Record<string, Clip> = {};
       for (const c of clips) clipMap[c.id] = c;
@@ -201,12 +265,27 @@ export const useStore = create<StoreState>((set, get) => {
       for (const l of levels) levelMap[l.id] = l;
       const valueMap: Record<string, LevelValue> = {};
       for (const v of levelValues) valueMap[v.id] = v;
+      const boardMap: Record<string, Board> = {};
+      for (const b of boards) boardMap[b.id] = b;
+      const boardNodeMap: Record<string, BoardNode> = {};
+      for (const n of boardNodes) boardNodeMap[n.id] = n;
 
       let needsPerm = false;
       if (meta?.rootHandle) {
         const ok = await (meta.rootHandle as any).queryPermission({ mode: "read" });
         needsPerm = ok !== "granted";
       }
+
+      const sortedBoards = Object.values(boardMap).sort(
+        (a, b) => a.createdAt - b.createdAt
+      );
+      const currentBoardId = sortedBoards[0]?.id ?? null;
+
+      let savedViewMode: ViewMode = "grid";
+      try {
+        const raw = localStorage.getItem("storytime.viewMode");
+        if (raw === "grid" || raw === "board") savedViewMode = raw;
+      } catch {}
 
       set({
         ready: true,
@@ -216,6 +295,10 @@ export const useStore = create<StoreState>((set, get) => {
         planned: plannedMap,
         levels: levelMap,
         levelValues: valueMap,
+        boards: boardMap,
+        boardNodes: boardNodeMap,
+        currentBoardId,
+        viewMode: savedViewMode,
         needsPermission: needsPerm,
       });
 
@@ -779,6 +862,199 @@ export const useStore = create<StoreState>((set, get) => {
       set({ dragSelecting: false });
     },
 
+    setViewMode(m) {
+      try {
+        localStorage.setItem("storytime.viewMode", m);
+      } catch {}
+      set({ viewMode: m });
+    },
+    async ensureBoard() {
+      const existing = get().currentBoardId;
+      if (existing) return existing;
+      const board: Board = {
+        id: uid(),
+        name: "Storyboard",
+        panX: 0,
+        panY: 0,
+        zoom: 1,
+        createdAt: Date.now(),
+      };
+      set({
+        boards: { ...get().boards, [board.id]: board },
+        currentBoardId: board.id,
+      });
+      await db.putOne("boards", board);
+      return board.id;
+    },
+    setBoardTool(t) {
+      set({ boardTool: t });
+    },
+    setBoardViewport(boardId, panX, panY, zoom) {
+      const b = get().boards[boardId];
+      if (!b) return;
+      const u = { ...b, panX, panY, zoom };
+      set({ boards: { ...get().boards, [boardId]: u } });
+      db.putOne("boards", u);
+    },
+
+    createGroupNode(boardId, x, y, w, h) {
+      const peers = Object.values(get().boardNodes).filter((n) => n.boardId === boardId);
+      const z = peers.length;
+      const n: BoardGroupNode = {
+        id: uid(),
+        boardId,
+        parentId: null,
+        kind: "group",
+        x,
+        y,
+        w,
+        h,
+        z,
+        label: "Group",
+        clipIds: [],
+      };
+      set({
+        boardNodes: { ...get().boardNodes, [n.id]: n },
+        boardSelectedIds: new Set([n.id]),
+      });
+      db.putOne("boardNodes", n);
+      return n;
+    },
+    createRectNode(boardId, x, y, w, h) {
+      const peers = Object.values(get().boardNodes).filter((n) => n.boardId === boardId);
+      const z = peers.length;
+      const n: BoardRectNode = {
+        id: uid(),
+        boardId,
+        parentId: null,
+        kind: "rect",
+        x,
+        y,
+        w,
+        h,
+        z,
+        color: "#94a3b8",
+      };
+      set({
+        boardNodes: { ...get().boardNodes, [n.id]: n },
+        boardSelectedIds: new Set([n.id]),
+      });
+      db.putOne("boardNodes", n);
+      return n;
+    },
+    createCommentNode(boardId, x, y) {
+      const peers = Object.values(get().boardNodes).filter((n) => n.boardId === boardId);
+      const z = peers.length;
+      const n: BoardCommentNode = {
+        id: uid(),
+        boardId,
+        parentId: null,
+        kind: "comment",
+        x,
+        y,
+        w: 220,
+        h: 100,
+        z,
+        text: "",
+      };
+      set({
+        boardNodes: { ...get().boardNodes, [n.id]: n },
+        boardSelectedIds: new Set([n.id]),
+      });
+      db.putOne("boardNodes", n);
+      return n;
+    },
+    createArrowNode(boardId, x1, y1, x2, y2, fromNodeId, toNodeId) {
+      const peers = Object.values(get().boardNodes).filter((n) => n.boardId === boardId);
+      const z = peers.length;
+      // x/y/w/h serve as a bbox for hit-test / move purposes.
+      const x = Math.min(x1, x2);
+      const y = Math.min(y1, y2);
+      const w = Math.abs(x2 - x1);
+      const h = Math.abs(y2 - y1);
+      const n: BoardArrowNode = {
+        id: uid(),
+        boardId,
+        parentId: null,
+        kind: "arrow",
+        x,
+        y,
+        w,
+        h,
+        z,
+        x1,
+        y1,
+        x2,
+        y2,
+        fromNodeId,
+        toNodeId,
+      };
+      set({
+        boardNodes: { ...get().boardNodes, [n.id]: n },
+        boardSelectedIds: new Set([n.id]),
+      });
+      db.putOne("boardNodes", n);
+      return n;
+    },
+    updateBoardNode(id, patch) {
+      const n = get().boardNodes[id];
+      if (!n) return;
+      const u = { ...n, ...patch } as BoardNode;
+      set({ boardNodes: { ...get().boardNodes, [id]: u } });
+      db.putOne("boardNodes", u);
+    },
+    deleteBoardNodes(ids) {
+      const next = { ...get().boardNodes };
+      for (const id of ids) {
+        if (next[id]) {
+          delete next[id];
+          db.deleteOne("boardNodes", id);
+        }
+      }
+      const nextSel = new Set(get().boardSelectedIds);
+      for (const id of ids) nextSel.delete(id);
+      set({ boardNodes: next, boardSelectedIds: nextSel });
+    },
+
+    selectBoardNodes(ids) {
+      set({ boardSelectedIds: new Set(ids) });
+    },
+    toggleBoardNodeSelected(id) {
+      const next = new Set(get().boardSelectedIds);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      set({ boardSelectedIds: next });
+    },
+    clearBoardSelection() {
+      set({ boardSelectedIds: new Set() });
+    },
+
+    addClipToGroup(groupId, clipId) {
+      const n = get().boardNodes[groupId];
+      if (!n || n.kind !== "group") return;
+      if (n.clipIds.includes(clipId)) return;
+      const u: BoardGroupNode = { ...n, clipIds: [...n.clipIds, clipId] };
+      set({ boardNodes: { ...get().boardNodes, [groupId]: u } });
+      db.putOne("boardNodes", u);
+    },
+    removeClipFromGroup(groupId, clipId) {
+      const n = get().boardNodes[groupId];
+      if (!n || n.kind !== "group") return;
+      if (!n.clipIds.includes(clipId)) return;
+      const u: BoardGroupNode = {
+        ...n,
+        clipIds: n.clipIds.filter((id) => id !== clipId),
+      };
+      set({ boardNodes: { ...get().boardNodes, [groupId]: u } });
+      db.putOne("boardNodes", u);
+    },
+    openGroupModal(id) {
+      set({ groupModalId: id });
+    },
+    closeGroupModal() {
+      set({ groupModalId: null });
+    },
+
     exportBackup() {
       const s = get();
       const clipTags: BackupPayload["clipTags"] = [];
@@ -798,24 +1074,32 @@ export const useStore = create<StoreState>((set, get) => {
         levels: Object.values(s.levels),
         levelValues: Object.values(s.levelValues),
         clipTags,
+        boards: Object.values(s.boards),
+        boardNodes: Object.values(s.boardNodes),
       };
     },
 
     async importBackup(payload, opts) {
       const mode = opts?.mode ?? "replace";
 
-      // Replace mode: wipe current levels/values & clear all clip.tags first
+      // Replace mode: wipe current levels/values/boards & clear clip.tags first
       let nextLevels: Record<string, Level>;
       let nextValues: Record<string, LevelValue>;
+      let nextBoards: Record<string, Board>;
+      let nextBoardNodes: Record<string, BoardNode>;
       let nextClips = { ...get().clips };
 
       if (mode === "replace") {
-        // delete existing from DB
         for (const id of Object.keys(get().levels)) await db.deleteOne("levels", id);
         for (const id of Object.keys(get().levelValues))
           await db.deleteOne("levelValues", id);
+        for (const id of Object.keys(get().boards)) await db.deleteOne("boards", id);
+        for (const id of Object.keys(get().boardNodes))
+          await db.deleteOne("boardNodes", id);
         nextLevels = {};
         nextValues = {};
+        nextBoards = {};
+        nextBoardNodes = {};
         for (const c of Object.values(nextClips)) {
           if (c.tags && Object.keys(c.tags).length > 0) {
             const u = { ...c, tags: {} };
@@ -826,6 +1110,8 @@ export const useStore = create<StoreState>((set, get) => {
       } else {
         nextLevels = { ...get().levels };
         nextValues = { ...get().levelValues };
+        nextBoards = { ...get().boards };
+        nextBoardNodes = { ...get().boardNodes };
       }
 
       // Apply levels
@@ -837,6 +1123,15 @@ export const useStore = create<StoreState>((set, get) => {
       for (const v of payload.levelValues) {
         nextValues[v.id] = v;
         await db.putOne("levelValues", v);
+      }
+      // Apply boards + nodes (optional)
+      for (const b of payload.boards ?? []) {
+        nextBoards[b.id] = b;
+        await db.putOne("boards", b);
+      }
+      for (const n of payload.boardNodes ?? []) {
+        nextBoardNodes[n.id] = n;
+        await db.putOne("boardNodes", n);
       }
 
       // Build lookup maps for matching clips
@@ -868,9 +1163,17 @@ export const useStore = create<StoreState>((set, get) => {
         tagged++;
       }
 
+      const sortedBoards = Object.values(nextBoards).sort(
+        (a, b) => a.createdAt - b.createdAt
+      );
+      const currentBoardId = sortedBoards[0]?.id ?? null;
+
       set({
         levels: nextLevels,
         levelValues: nextValues,
+        boards: nextBoards,
+        boardNodes: nextBoardNodes,
+        currentBoardId,
         clips: nextClips,
         selection: { kind: "all" },
         selectedClipIds: new Set(),

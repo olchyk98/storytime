@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import {
   Calendar,
   ChevronRight,
@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 import { useStore, type Selection } from "../state/store";
+import { useLocalStorage } from "../lib/useLocalStorage";
 
 export function Sidebar({
   onOpenManager,
@@ -33,9 +34,17 @@ export function Sidebar({
     addLevel,
   } = useStore();
 
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [expandedDays, setExpandedDays] = useState<Record<string, boolean>>({});
-  const [expandedEvents, setExpandedEvents] = useState<Record<string, boolean>>({});
+  const [expanded, setExpanded] = useLocalStorage<Record<string, boolean>>(
+    "storytime.sidebar.levels.expanded",
+    {}
+  );
+  const [expandedDays, setExpandedDays] = useLocalStorage<Record<string, boolean>>(
+    "storytime.sidebar.folders.days.expanded",
+    {}
+  );
+  const [expandedEvents, setExpandedEvents] = useLocalStorage<
+    Record<string, boolean>
+  >("storytime.sidebar.folders.events.expanded", {});
 
   const folderTree = useMemo(() => {
     const map = new Map<string, Map<string, Map<string, number>>>();

@@ -4,6 +4,63 @@ export type PlannedId = string;
 export type SourceKey = string;
 export type LevelId = string;
 export type LevelValueId = string;
+export type BoardId = string;
+export type BoardNodeId = string;
+
+export interface Board {
+  id: BoardId;
+  name: string;
+  panX: number;
+  panY: number;
+  zoom: number;
+  createdAt: number;
+}
+
+export interface BoardNodeBase {
+  id: BoardNodeId;
+  boardId: BoardId;
+  parentId: BoardNodeId | null;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  z: number;
+  label?: string;
+  color?: string;
+}
+
+export interface BoardGroupNode extends BoardNodeBase {
+  kind: "group";
+  tags?: Record<LevelId, LevelValueId>;
+  clipIds: ClipId[];
+}
+
+export interface BoardRectNode extends BoardNodeBase {
+  kind: "rect";
+}
+
+export interface BoardCommentNode extends BoardNodeBase {
+  kind: "comment";
+  text: string;
+}
+
+// Arrows use endpoints instead of box. We keep x/y/w/h from BoardNodeBase as a
+// derived bounding box for consistency with the others (computed on write).
+export interface BoardArrowNode extends BoardNodeBase {
+  kind: "arrow";
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  fromNodeId?: BoardNodeId;
+  toNodeId?: BoardNodeId;
+}
+
+export type BoardNode =
+  | BoardGroupNode
+  | BoardRectNode
+  | BoardCommentNode
+  | BoardArrowNode;
 
 export interface Level {
   id: LevelId;

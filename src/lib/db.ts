@@ -1,8 +1,17 @@
 import { openDB, type IDBPDatabase } from "idb";
-import type { Bucket, Clip, Level, LevelValue, PlannedShot, ProjectMeta } from "../types";
+import type {
+  Board,
+  BoardNode,
+  Bucket,
+  Clip,
+  Level,
+  LevelValue,
+  PlannedShot,
+  ProjectMeta,
+} from "../types";
 
 const DB_NAME = "storytime";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 interface Schema {
   meta: { key: string; value: ProjectMeta };
@@ -12,6 +21,8 @@ interface Schema {
   thumbs: { key: string; value: { id: string; dataUrl: string } };
   levels: { key: string; value: Level };
   levelValues: { key: string; value: LevelValue };
+  boards: { key: string; value: Board };
+  boardNodes: { key: string; value: BoardNode };
 }
 
 let dbp: Promise<IDBPDatabase> | null = null;
@@ -27,6 +38,8 @@ function getDB() {
         if (!db.objectStoreNames.contains("thumbs")) db.createObjectStore("thumbs", { keyPath: "id" });
         if (!db.objectStoreNames.contains("levels")) db.createObjectStore("levels", { keyPath: "id" });
         if (!db.objectStoreNames.contains("levelValues")) db.createObjectStore("levelValues", { keyPath: "id" });
+        if (!db.objectStoreNames.contains("boards")) db.createObjectStore("boards", { keyPath: "id" });
+        if (!db.objectStoreNames.contains("boardNodes")) db.createObjectStore("boardNodes", { keyPath: "id" });
       },
     });
   }
