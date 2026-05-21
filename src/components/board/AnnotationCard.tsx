@@ -101,27 +101,16 @@ export function AnnotationCard({ node, selected, zoom }: Props) {
   return (
     <div
       className={clsx(
-        "absolute rounded-xl border-2 border-dashed transition-colors",
+        "absolute rounded-xl border-2 border-dashed transition-colors pointer-events-none",
         selected
           ? "border-accent-400 bg-accent-400/5"
-          : "border-ink-700 bg-ink-900/20 hover:border-ink-600"
+          : "border-ink-700 bg-ink-900/10"
       )}
       style={{
         left: node.x,
         top: node.y,
         width: node.w,
         height: node.h,
-        zIndex: 1,
-      }}
-      onPointerDown={(e) => {
-        // Clicking anywhere else inside the box just selects, doesn't move.
-        const target = e.target as HTMLElement;
-        if (target.closest("[data-annotation-header]")) return;
-        if (target.closest("[data-annotation-resize]")) return;
-        // Allow clicks through to beats which are on top — but stop selection
-        // from bubbling out as a canvas pan.
-        e.stopPropagation();
-        selectBoardNodes([node.id]);
       }}
     >
       <div
@@ -133,7 +122,7 @@ export function AnnotationCard({ node, selected, zoom }: Props) {
         }}
         style={{ height: HEADER_HEIGHT, fontSize: 42, lineHeight: 1 }}
         className={clsx(
-          "absolute left-2 -top-8 px-6 rounded-lg font-semibold inline-flex items-center gap-3 cursor-grab active:cursor-grabbing select-none tracking-tight",
+          "absolute left-2 -top-8 px-6 rounded-lg font-semibold inline-flex items-center gap-3 cursor-grab active:cursor-grabbing select-none tracking-tight pointer-events-auto",
           selected
             ? "bg-accent-400 text-ink-950"
             : "bg-ink-850 text-ink-100 border border-ink-700"
@@ -179,7 +168,7 @@ export function AnnotationCard({ node, selected, zoom }: Props) {
         <div
           data-annotation-resize
           onPointerDown={onResizeHandlePointerDown}
-          className="absolute -right-1.5 -bottom-1.5 size-4 rounded-sm bg-accent-400 border-2 border-ink-950 cursor-nwse-resize"
+          className="absolute -right-1.5 -bottom-1.5 size-4 rounded-sm bg-accent-400 border-2 border-ink-950 cursor-nwse-resize pointer-events-auto"
           title="Resize"
         />
       )}
