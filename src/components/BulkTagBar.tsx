@@ -29,20 +29,18 @@ export function BulkTagBar() {
     visible.length > 0 && visible.every((c) => selectedClipIds.has(c.id));
 
   return (
-    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-3 py-2 rounded-2xl bg-ink-850 border border-ink-700 shadow-2xl shadow-ink-950/70 pop-in">
-      <span className="text-sm font-medium text-ink-50 pl-1 pr-1">
+    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-3 py-2 rounded-2xl bg-ink-850 border border-ink-700 shadow-2xl shadow-ink-950/70 pop-in whitespace-nowrap">
+      <span className="text-sm font-medium text-ink-50 px-1 tabular-nums">
         {ids.length} selected
       </span>
       <button
         onClick={selectAllVisible}
         disabled={allVisibleSelected}
-        className="h-8 px-2.5 rounded-md border border-ink-700 hover:border-ink-600 text-ink-200 hover:text-ink-50 text-xs inline-flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed transition"
+        className="h-8 px-2.5 rounded-md border border-ink-700 hover:border-ink-600 text-ink-200 hover:text-ink-50 text-xs inline-flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed transition shrink-0"
         title="Select all in current view (⌘A)"
       >
-        <CheckCheck className="size-3.5" />
-        {allVisibleSelected
-          ? `All ${visible.length} selected`
-          : `Select all ${visible.length}`}
+        <CheckCheck className="size-3.5 shrink-0" />
+        {allVisibleSelected ? `All ${visible.length}` : `Select all ${visible.length}`}
       </button>
       <span className="w-px h-6 bg-ink-700" />
 
@@ -77,6 +75,7 @@ export function BulkTagBar() {
               <SearchableSelect
                 value={value}
                 placeholder={shared === "mixed" ? `${l.name} (mixed)` : l.name}
+                direction="up"
                 options={valuesForLevel.map((v) => ({
                   id: v.id,
                   label: v.name,

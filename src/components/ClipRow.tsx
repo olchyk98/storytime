@@ -20,7 +20,6 @@ export function ClipRow({ clip, onOpen }: { clip: Clip; onOpen: () => void }) {
     levels,
     levelValues,
     selectedClipIds,
-    selectOnlyClip,
     toggleClipSelected,
     selectRangeTo,
   } = useStore();
@@ -149,8 +148,7 @@ export function ClipRow({ clip, onOpen }: { clip: Clip; onOpen: () => void }) {
 
   function handleCheckboxClick(e: React.MouseEvent) {
     e.stopPropagation();
-    if (isSelected) toggleClipSelected(clip.id);
-    else selectOnlyClip(clip.id);
+    toggleClipSelected(clip.id);
   }
 
   return (

@@ -18,6 +18,8 @@ interface Props {
   triggerClassName?: string;
   onChange: (id: string | null) => void;
   align?: "left" | "right";
+  /** "down" opens below the trigger (default); "up" opens above with search at the bottom. */
+  direction?: "up" | "down";
   /** Optional "create new" action shown at the bottom when query has no exact match */
   onCreate?: (name: string) => string | undefined;
   createLabel?: string;
@@ -33,6 +35,7 @@ export function SearchableSelect({
   triggerClassName,
   onChange,
   align = "left",
+  direction = "down",
   onCreate,
   createLabel = "Create",
 }: Props) {
@@ -150,83 +153,114 @@ export function SearchableSelect({
           </span>
         )}
         <ChevronDown
-          className={clsx("size-3.5 text-ink-400 transition", open && "rotate-180")}
+          className={clsx(
+            "size-3.5 text-ink-400 transition",
+            direction === "up" ? "rotate-180" : "",
+            open && (direction === "up" ? "rotate-0" : "rotate-180")
+          )}
         />
       </button>
 
       {open && (
         <div
           className={clsx(
-            "absolute top-10 z-30 w-full min-w-[14rem] rounded-lg bg-ink-850 border border-ink-700 shadow-xl shadow-ink-950/70 overflow-hidden pop-in",
+            "absolute z-30 w-full min-w-[14rem] rounded-lg bg-ink-850 border border-ink-700 shadow-xl shadow-ink-950/70 overflow-hidden pop-in",
+            direction === "up" ? "bottom-10" : "top-10",
             align === "right" ? "right-0" : "left-0"
           )}
         >
-          <div className="px-2 pt-2 pb-1.5 border-b border-ink-800">
-            <div className="relative">
-              <Search className="size-3.5 text-ink-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-              <input
-                ref={inputRef}
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                onKeyDown={onKeyDown}
-                placeholder="Search…"
-                className="w-full h-8 pl-8 pr-2 rounded bg-ink-900 border border-ink-800 focus:border-accent-400 text-sm text-ink-100 placeholder:text-ink-500"
-              />
-            </div>
-          </div>
-          <div className="max-h-64 overflow-y-auto py-1">
-            {filtered.length === 0 && !showCreate ? (
-              <div className="px-3 py-3 text-xs text-ink-500 text-center">
-                {emptyLabel}
-              </div>
-            ) : (
-              filtered.map((o, i) => {
-                const isSelected = o.id === value;
-                const isHL = i === highlight;
-                return (
-                  <button
-                    key={o.id}
-                    onMouseEnter={() => setHighlight(i)}
-                    onClick={() => commit(o.id)}
-                    className={clsx(
-                      "w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-sm transition",
-                      isHL ? "bg-ink-700 text-ink-50" : "text-ink-100 hover:bg-ink-800"
-                    )}
-                  >
-                    {o.color && (
-                      <span
-                        className="size-2.5 rounded-full shrink-0"
-                        style={{ backgroundColor: o.color }}
-                      />
-                    )}
-                    <span className="flex-1 truncate">{o.label}</span>
-                    {isSelected && <Check className="size-3.5 text-accent-300" />}
-                  </button>
-                );
-              })
-            )}
-            {showCreate && (
-              <button
-                onMouseEnter={() => setHighlight(filtered.length)}
-                onClick={() => {
-                  const id = onCreate?.(q.trim());
-                  if (id) commit(id);
-                  else setOpen(false);
-                }}
+          {(() => {
+            const searchBar = (
+              <div
                 className={clsx(
-                  "w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-sm border-t border-ink-800 mt-1",
-                  highlight === filtered.length
-                    ? "bg-ink-700 text-ink-50"
-                    : "text-accent-300 hover:bg-ink-800"
+                  "px-2 py-1.5",
+                  direction === "up"
+                    ? "border-t border-ink-800"
+                    : "border-b border-ink-800"
                 )}
               >
-                <span className="size-2.5 rounded-full border border-current shrink-0" />
-                <span className="flex-1 truncate">
-                  {createLabel} <span className="font-medium">"{q}"</span>
-                </span>
-              </button>
-            )}
-          </div>
+                <div className="relative">
+                  <Search className="size-3.5 text-ink-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    ref={inputRef}
+                    value={q}
+                    onChange={(e) => setQ(e.target.value)}
+                    onKeyDown={onKeyDown}
+                    placeholder="Search…"
+                    className="w-full h-8 pl-8 pr-2 rounded bg-ink-900 border border-ink-800 focus:border-accent-400 text-sm text-ink-100 placeholder:text-ink-500"
+                  />
+                </div>
+              </div>
+            );
+
+            const list = (
+              <div className="max-h-64 overflow-y-auto py-1">
+                {filtered.length === 0 && !showCreate ? (
+                  <div className="px-3 py-3 text-xs text-ink-500 text-center">
+                    {emptyLabel}
+                  </div>
+                ) : (
+                  filtered.map((o, i) => {
+                    const isSelected = o.id === value;
+                    const isHL = i === highlight;
+                    return (
+                      <button
+                        key={o.id}
+                        onMouseEnter={() => setHighlight(i)}
+                        onClick={() => commit(o.id)}
+                        className={clsx(
+                          "w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-sm transition",
+                          isHL ? "bg-ink-700 text-ink-50" : "text-ink-100 hover:bg-ink-800"
+                        )}
+                      >
+                        {o.color && (
+                          <span
+                            className="size-2.5 rounded-full shrink-0"
+                            style={{ backgroundColor: o.color }}
+                          />
+                        )}
+                        <span className="flex-1 truncate">{o.label}</span>
+                        {isSelected && <Check className="size-3.5 text-accent-300" />}
+                      </button>
+                    );
+                  })
+                )}
+                {showCreate && (
+                  <button
+                    onMouseEnter={() => setHighlight(filtered.length)}
+                    onClick={() => {
+                      const id = onCreate?.(q.trim());
+                      if (id) commit(id);
+                      else setOpen(false);
+                    }}
+                    className={clsx(
+                      "w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-sm border-t border-ink-800 mt-1",
+                      highlight === filtered.length
+                        ? "bg-ink-700 text-ink-50"
+                        : "text-accent-300 hover:bg-ink-800"
+                    )}
+                  >
+                    <span className="size-2.5 rounded-full border border-current shrink-0" />
+                    <span className="flex-1 truncate">
+                      {createLabel} <span className="font-medium">"{q}"</span>
+                    </span>
+                  </button>
+                )}
+              </div>
+            );
+
+            return direction === "up" ? (
+              <>
+                {list}
+                {searchBar}
+              </>
+            ) : (
+              <>
+                {searchBar}
+                {list}
+              </>
+            );
+          })()}
         </div>
       )}
     </div>

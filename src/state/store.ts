@@ -4,6 +4,26 @@ import * as db from "../lib/db";
 import { ensurePermission, getFileByPath, scanDirectory } from "../lib/fs";
 import { extractThumb } from "../lib/thumbs";
 
+export interface BackupPayload {
+  version: 1;
+  exportedAt: string;
+  project?: string;
+  levels: Level[];
+  levelValues: LevelValue[];
+  clipTags: {
+    fingerprint: string;
+    path: string[];
+    tags: Record<string, string>;
+  }[];
+}
+
+export interface ImportSummary {
+  levels: number;
+  values: number;
+  taggedClips: number;
+  unmatchedClips: number;
+}
+
 export type Selection =
   | { kind: "all" }
   | { kind: "new" }
@@ -82,6 +102,13 @@ interface StoreState {
   deleteValue: (id: string) => void;
   countClipsTaggedWithValue: (valueId: string) => number;
   tagClips: (clipIds: string[], levelId: string, valueId: string | null) => void;
+
+  // backup
+  exportBackup: () => BackupPayload;
+  importBackup: (
+    payload: BackupPayload,
+    opts?: { mode?: "replace" | "merge" }
+  ) => Promise<ImportSummary>;
 
   // multi-select
   selectOnlyClip: (id: string) => void;
@@ -750,6 +777,111 @@ export const useStore = create<StoreState>((set, get) => {
     endDragSelect() {
       if (!get().dragSelecting) return;
       set({ dragSelecting: false });
+    },
+
+    exportBackup() {
+      const s = get();
+      const clipTags: BackupPayload["clipTags"] = [];
+      for (const c of Object.values(s.clips)) {
+        if (c.tags && Object.keys(c.tags).length > 0) {
+          clipTags.push({
+            fingerprint: c.fingerprint,
+            path: c.path,
+            tags: { ...c.tags },
+          });
+        }
+      }
+      return {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        project: s.meta?.name,
+        levels: Object.values(s.levels),
+        levelValues: Object.values(s.levelValues),
+        clipTags,
+      };
+    },
+
+    async importBackup(payload, opts) {
+      const mode = opts?.mode ?? "replace";
+
+      // Replace mode: wipe current levels/values & clear all clip.tags first
+      let nextLevels: Record<string, Level>;
+      let nextValues: Record<string, LevelValue>;
+      let nextClips = { ...get().clips };
+
+      if (mode === "replace") {
+        // delete existing from DB
+        for (const id of Object.keys(get().levels)) await db.deleteOne("levels", id);
+        for (const id of Object.keys(get().levelValues))
+          await db.deleteOne("levelValues", id);
+        nextLevels = {};
+        nextValues = {};
+        for (const c of Object.values(nextClips)) {
+          if (c.tags && Object.keys(c.tags).length > 0) {
+            const u = { ...c, tags: {} };
+            nextClips[c.id] = u;
+            await db.putOne("clips", u);
+          }
+        }
+      } else {
+        nextLevels = { ...get().levels };
+        nextValues = { ...get().levelValues };
+      }
+
+      // Apply levels
+      for (const l of payload.levels) {
+        nextLevels[l.id] = l;
+        await db.putOne("levels", l);
+      }
+      // Apply values
+      for (const v of payload.levelValues) {
+        nextValues[v.id] = v;
+        await db.putOne("levelValues", v);
+      }
+
+      // Build lookup maps for matching clips
+      const byFingerprint = new Map<string, string>();
+      const byPath = new Map<string, string>();
+      for (const c of Object.values(nextClips)) {
+        byFingerprint.set(c.fingerprint, c.id);
+        byPath.set(c.path.join("/"), c.id);
+      }
+
+      let tagged = 0;
+      let unmatched = 0;
+      for (const entry of payload.clipTags) {
+        let clipId =
+          byFingerprint.get(entry.fingerprint) ??
+          byPath.get(entry.path.join("/"));
+        if (!clipId) {
+          unmatched++;
+          continue;
+        }
+        const existing = nextClips[clipId];
+        const mergedTags =
+          mode === "merge"
+            ? { ...(existing.tags ?? {}), ...entry.tags }
+            : { ...entry.tags };
+        const u = { ...existing, tags: mergedTags };
+        nextClips[clipId] = u;
+        await db.putOne("clips", u);
+        tagged++;
+      }
+
+      set({
+        levels: nextLevels,
+        levelValues: nextValues,
+        clips: nextClips,
+        selection: { kind: "all" },
+        selectedClipIds: new Set(),
+      });
+
+      return {
+        levels: payload.levels.length,
+        values: payload.levelValues.length,
+        taggedClips: tagged,
+        unmatchedClips: unmatched,
+      };
     },
   };
 });

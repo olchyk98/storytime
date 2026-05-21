@@ -1,15 +1,17 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
+  Download,
   GripVertical,
   Plus,
   Settings2,
   Trash2,
+  Upload,
   X,
 } from "lucide-react";
 import clsx from "clsx";
-import { useStore } from "../state/store";
+import { useStore, type BackupPayload, type ImportSummary } from "../state/store";
 import type { Level, LevelValue } from "../types";
 
 export function LevelsManager({ onClose }: { onClose: () => void }) {
@@ -27,6 +29,9 @@ export function LevelsManager({ onClose }: { onClose: () => void }) {
     reorderValues,
     deleteValue,
     countClipsTaggedWithValue,
+    exportBackup,
+    importBackup,
+    meta,
   } = useStore();
 
   const sortedLevels = useMemo(
@@ -53,6 +58,48 @@ export function LevelsManager({ onClose }: { onClose: () => void }) {
     | { kind: "value"; value: LevelValue; affected: number }
     | null
   >(null);
+  const [importPreview, setImportPreview] = useState<BackupPayload | null>(null);
+  const [importSummary, setImportSummary] = useState<ImportSummary | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  function doExport() {
+    const payload = exportBackup();
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const proj = (meta?.name ?? "storytime").replace(/[^a-z0-9-_]+/gi, "-");
+    a.href = url;
+    a.download = `${proj}-backup-${stamp}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function onFilePicked(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      if (parsed.version !== 1 || !Array.isArray(parsed.levels)) {
+        alert("This file doesn't look like a Storytime backup.");
+        return;
+      }
+      setImportPreview(parsed as BackupPayload);
+    } catch {
+      alert("Could not read that file.");
+    }
+  }
+
+  async function applyImport(mode: "replace" | "merge") {
+    if (!importPreview) return;
+    const result = await importBackup(importPreview, { mode });
+    setImportPreview(null);
+    setImportSummary(result);
+  }
 
   function addLevelInline() {
     const n = newLevelName.trim();
@@ -91,6 +138,29 @@ export function LevelsManager({ onClose }: { onClose: () => void }) {
               Define levels (dimensions) and the values within them.
             </div>
           </div>
+          <button
+            onClick={doExport}
+            className="h-8 px-2.5 rounded-md border border-ink-700 hover:border-ink-600 text-ink-200 hover:text-ink-50 text-xs inline-flex items-center gap-1.5 transition"
+            title="Download a JSON backup of your levels, values, and tags"
+          >
+            <Download className="size-3.5" />
+            Export
+          </button>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="h-8 px-2.5 rounded-md border border-ink-700 hover:border-ink-600 text-ink-200 hover:text-ink-50 text-xs inline-flex items-center gap-1.5 transition"
+            title="Restore from a JSON backup"
+          >
+            <Upload className="size-3.5" />
+            Import
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/json,.json"
+            onChange={onFilePicked}
+            className="hidden"
+          />
           <button
             onClick={onClose}
             className="size-8 rounded-md hover:bg-ink-800 text-ink-300 hover:text-ink-50 flex items-center justify-center"
@@ -264,6 +334,21 @@ export function LevelsManager({ onClose }: { onClose: () => void }) {
           }}
         />
       )}
+
+      {importPreview && (
+        <ConfirmImport
+          payload={importPreview}
+          onCancel={() => setImportPreview(null)}
+          onApply={applyImport}
+        />
+      )}
+
+      {importSummary && (
+        <ImportSummaryDialog
+          summary={importSummary}
+          onClose={() => setImportSummary(null)}
+        />
+      )}
     </div>
   );
 }
@@ -395,6 +480,145 @@ function ConfirmDelete({
             className="h-9 px-4 rounded-lg bg-rose-500 hover:bg-rose-500/90 text-ink-50 font-medium text-sm transition"
           >
             Untag {info.affected} & delete
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConfirmImport({
+  payload,
+  onCancel,
+  onApply,
+}: {
+  payload: BackupPayload;
+  onCancel: () => void;
+  onApply: (mode: "replace" | "merge") => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-[60] bg-ink-950/75 backdrop-blur-sm flex items-center justify-center p-6 fade-in"
+      onClick={onCancel}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-[460px] rounded-xl bg-ink-900 border border-ink-700 shadow-2xl shadow-ink-950/80 p-5 pop-in"
+      >
+        <div className="flex items-start gap-3 mb-4">
+          <div className="size-9 rounded-lg bg-accent-400/20 text-accent-300 flex items-center justify-center shrink-0">
+            <Upload className="size-4" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="font-medium text-ink-50">Restore from backup</div>
+            <div className="text-sm text-ink-300 mt-1 leading-relaxed">
+              From{" "}
+              <span className="font-mono text-ink-100">
+                {payload.project ?? "unknown project"}
+              </span>
+              , exported{" "}
+              <span className="text-ink-100">
+                {new Date(payload.exportedAt).toLocaleString()}
+              </span>
+              .
+            </div>
+            <div className="text-sm text-ink-200 mt-3 space-y-1 leading-snug">
+              <div>
+                <span className="font-mono text-ink-50">{payload.levels.length}</span> levels,{" "}
+                <span className="font-mono text-ink-50">
+                  {payload.levelValues.length}
+                </span>{" "}
+                values
+              </div>
+              <div>
+                <span className="font-mono text-ink-50">
+                  {payload.clipTags.length}
+                </span>{" "}
+                tagged clips in the backup
+              </div>
+            </div>
+            <div className="text-[12px] text-ink-400 mt-3 leading-snug">
+              Clips are matched by file fingerprint, falling back to path. Clips not
+              in this project will be skipped.
+            </div>
+          </div>
+        </div>
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            className="h-9 px-4 rounded-lg border border-ink-700 hover:border-ink-600 text-ink-200 hover:text-ink-50 text-sm transition"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => onApply("merge")}
+            className="h-9 px-4 rounded-lg border border-ink-700 hover:border-accent-400 text-ink-100 hover:text-ink-50 text-sm transition"
+            title="Add levels/values from the backup and overlay tags. Existing data is kept."
+          >
+            Merge
+          </button>
+          <button
+            onClick={() => onApply("replace")}
+            className="h-9 px-4 rounded-lg bg-accent-400 hover:bg-accent-300 text-ink-950 font-medium text-sm transition"
+            title="Replace current levels/values and tags with the backup."
+          >
+            Replace everything
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ImportSummaryDialog({
+  summary,
+  onClose,
+}: {
+  summary: ImportSummary;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-[60] bg-ink-950/75 backdrop-blur-sm flex items-center justify-center p-6 fade-in"
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-[400px] rounded-xl bg-ink-900 border border-ink-700 shadow-2xl shadow-ink-950/80 p-5 pop-in"
+      >
+        <div className="flex items-start gap-3 mb-4">
+          <div className="size-9 rounded-lg bg-sage-500/20 text-sage-400 flex items-center justify-center shrink-0">
+            <Upload className="size-4" />
+          </div>
+          <div className="flex-1">
+            <div className="font-medium text-ink-50">Backup restored</div>
+            <div className="text-sm text-ink-200 mt-2 space-y-1 leading-snug">
+              <div>
+                <span className="font-mono text-ink-50">{summary.levels}</span> levels +{" "}
+                <span className="font-mono text-ink-50">{summary.values}</span> values
+                applied
+              </div>
+              <div>
+                <span className="font-mono text-ink-50">{summary.taggedClips}</span>{" "}
+                clips re-tagged
+              </div>
+              {summary.unmatchedClips > 0 && (
+                <div className="text-ink-400">
+                  <span className="font-mono text-ink-300">
+                    {summary.unmatchedClips}
+                  </span>{" "}
+                  entries didn't match any clip in this project
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="flex justify-end">
+          <button
+            onClick={onClose}
+            className="h-9 px-4 rounded-lg bg-accent-400 hover:bg-accent-300 text-ink-950 font-medium text-sm transition"
+          >
+            Done
           </button>
         </div>
       </div>
