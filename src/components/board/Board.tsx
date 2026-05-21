@@ -46,10 +46,20 @@ function chipWidth(name: string): number {
   return Math.ceil(12 + textW); // 12px horizontal padding
 }
 
+function countAreaWidth(includedCount: number, excludedCount: number): number {
+  // Mirrors what the card actually renders.
+  const text =
+    String(includedCount) +
+    (excludedCount > 0 ? ` (−${excludedCount})` : "");
+  // ~6px per mono char at 10px + some margin.
+  return Math.ceil(text.length * 6 + 16);
+}
+
 function chipsRowWidth(
   beat: BoardGroupNode,
   levels: Record<string, Level>,
-  levelValues: Record<string, LevelValue>
+  levelValues: Record<string, LevelValue>,
+  countArea: number
 ): number {
   if (!beat.tags) return 0;
   const names: string[] = [];
@@ -64,18 +74,20 @@ function chipsRowWidth(
   const chipsTotal = names.reduce((a, n) => a + chipWidth(n), 0);
   const gaps = (names.length - 1) * 4;
   const containerPadding = 24; // px-3 on the row
-  const countArea = 56; // count badge + breathing room on the right
   return chipsTotal + gaps + containerPadding + countArea;
 }
 
 function beatWidthFor(
   beat: BoardGroupNode,
   levels: Record<string, Level>,
-  levelValues: Record<string, LevelValue>
+  levelValues: Record<string, LevelValue>,
+  includedCount: number,
+  excludedCount: number
 ) {
   const labelWidth = measureLabelWidth(beat.label ?? "");
   const labelBasedWidth = HEADER_CHROME_WIDTH + labelWidth + LABEL_PADDING;
-  const chipBased = chipsRowWidth(beat, levels, levelValues);
+  const countArea = countAreaWidth(includedCount, excludedCount);
+  const chipBased = chipsRowWidth(beat, levels, levelValues, countArea);
   const desired = Math.max(labelBasedWidth, chipBased);
   return Math.min(
     BEAT_MAX_WIDTH,
@@ -148,9 +160,10 @@ export function Board() {
     );
   }, [boardNodes, board]);
 
+  const clips = useStore((s) => s.clips);
   const layout: BeatLayout[] = useMemo(
-    () => computeLayout(beats, levels, levelValues),
-    [beats, levels, levelValues]
+    () => computeLayout(beats, levels, levelValues, clips),
+    [beats, levels, levelValues, clips]
   );
 
   const layoutById = useMemo(() => {
@@ -469,7 +482,8 @@ export function Board() {
 function computeLayout(
   beats: BoardGroupNode[],
   levels: Record<string, Level>,
-  levelValues: Record<string, LevelValue>
+  levelValues: Record<string, LevelValue>,
+  clips: Record<string, Clip>
 ): BeatLayout[] {
   if (beats.length === 0) return [];
   // Build parent map for rank calculation.
@@ -518,13 +532,24 @@ function computeLayout(
     });
   }
 
+  // Cache per-beat width using current clip counts.
+  const widthByBeatId = new Map<string, number>();
+  function widthOf(b: BoardGroupNode): number {
+    const cached = widthByBeatId.get(b.id);
+    if (cached !== undefined) return cached;
+    const matching = clipsMatchingGroup(clips, b.tags);
+    const excludedSet = new Set(b.excludedClipIds ?? []);
+    const included = matching.filter((c) => !excludedSet.has(c.id));
+    const w = beatWidthFor(b, levels, levelValues, included.length, excludedSet.size);
+    widthByBeatId.set(b.id, w);
+    return w;
+  }
+
   // Column x positions are cumulative on rank widths.
   const sortedRanks = [...byRank.keys()].sort((a, b) => a - b);
   const colWidthByRank = new Map<number, number>();
   for (const r of sortedRanks) {
-    const w = Math.max(
-      ...byRank.get(r)!.map((b) => beatWidthFor(b, levels, levelValues))
-    );
+    const w = Math.max(...byRank.get(r)!.map(widthOf));
     colWidthByRank.set(r, w);
   }
   const colXByRank = new Map<number, number>();
@@ -543,7 +568,7 @@ function computeLayout(
         beat: b,
         x: cx,
         y: PADDING + i * (BEAT_HEIGHT + GAP_Y),
-        width: beatWidthFor(b, levels, levelValues),
+        width: widthOf(b),
         rank: r,
       });
     });
@@ -683,7 +708,7 @@ function BeatCard({
           ))
         )}
         <span className="flex-1" />
-        <span className="text-[10px] font-mono text-ink-400 tabular-nums">
+        <span className="text-[10px] font-mono text-ink-400 tabular-nums whitespace-nowrap shrink-0">
           {sorted.length}
           {excluded.size > 0 && (
             <span className="text-rose-500/70"> (−{excluded.size})</span>
