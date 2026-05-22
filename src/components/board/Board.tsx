@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import {
+  Clapperboard,
   Copy,
   Download,
   Expand,
@@ -8,12 +9,19 @@ import {
   Pencil,
   Plus,
   Workflow,
+  X,
 } from "lucide-react";
 import { useStore } from "../../state/store";
 import { downloadBackup } from "../../lib/downloadBackup";
+import { useLocalStorage } from "../../lib/useLocalStorage";
 import type { BoardAnnotationNode, BoardGroupNode } from "../../types";
 import { BeatEditor } from "./BeatEditor";
 import { clipsMatchingGroup, sortClips } from "../../lib/beatFilter";
+import {
+  downloadResolveScript,
+  generateResolveScript,
+  type ResolveExportSummary,
+} from "../../lib/resolveExport";
 import {
   BEAT_HEIGHT,
   beatWidthFor,
@@ -104,6 +112,10 @@ export function Board() {
     to: string;
   } | null>(null);
   const [viewportSize, setViewportSize] = useState({ w: 0, h: 0 });
+  const [resolveExport, setResolveExport] = useState<
+    | null
+    | { filename: string; summary: ResolveExportSummary }
+  >(null);
 
   useEffect(() => {
     function update() {
@@ -539,6 +551,29 @@ export function Board() {
           Save backup
         </button>
         <button
+          onClick={() => {
+            const s = useStore.getState();
+            const allBeats = Object.values(s.boardNodes).filter(
+              (n): n is BoardGroupNode => n.kind === "group"
+            );
+            const { script, summary } = generateResolveScript({
+              beats: allBeats,
+              clips: s.clips,
+              projectName: s.meta?.name ?? "storytime",
+            });
+            const filename = downloadResolveScript(
+              script,
+              s.meta?.name ?? "storytime"
+            );
+            setResolveExport({ filename, summary });
+          }}
+          className="h-10 px-3 rounded-lg border border-ink-700 hover:border-ink-600 bg-ink-900/80 backdrop-blur text-ink-200 hover:text-ink-50 text-sm inline-flex items-center gap-2 transition"
+          title="Generate a Resolve console script that builds your bins"
+        >
+          <Clapperboard className="size-4" />
+          To Resolve
+        </button>
+        <button
           onClick={startCreatingBeat}
           className="h-10 px-4 rounded-lg bg-accent-400 hover:bg-accent-300 text-ink-950 font-medium text-sm inline-flex items-center gap-2 shadow-lg shadow-accent-400/20 transition"
           title="Add beat (N)"
@@ -663,6 +698,14 @@ export function Board() {
             setCreatingBeat(null);
             setEditingBeatId(null);
           }}
+        />
+      )}
+
+      {resolveExport && (
+        <ResolveExportDialog
+          filename={resolveExport.filename}
+          summary={resolveExport.summary}
+          onClose={() => setResolveExport(null)}
         />
       )}
     </div>
@@ -1167,5 +1210,219 @@ function GraphArrows({
         );
       })()}
     </svg>
+  );
+}
+
+type ResolveMethod = "studio" | "console";
+type ResolveOs = "mac" | "win" | "linux";
+
+function detectOs(): ResolveOs {
+  if (typeof navigator === "undefined") return "mac";
+  const p = navigator.platform || navigator.userAgent || "";
+  if (/Win/i.test(p)) return "win";
+  if (/Linux|X11/i.test(p)) return "linux";
+  return "mac";
+}
+
+const SCRIPTS_PATH: Record<ResolveOs, string> = {
+  mac: "~/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Scripts/Edit/",
+  win: "%APPDATA%\\Blackmagic Design\\DaVinci Resolve\\Support\\Fusion\\Scripts\\Edit\\",
+  linux: "~/.local/share/DaVinciResolve/Fusion/Scripts/Edit/",
+};
+
+const OS_LABEL: Record<ResolveOs, string> = {
+  mac: "macOS",
+  win: "Windows",
+  linux: "Linux",
+};
+
+function ResolveExportDialog({
+  filename,
+  summary,
+  onClose,
+}: {
+  filename: string;
+  summary: ResolveExportSummary;
+  onClose: () => void;
+}) {
+  const [method, setMethod] = useLocalStorage<ResolveMethod>(
+    "storytime.resolve.method",
+    "studio"
+  );
+  const detectedOs = useMemo(detectOs, []);
+  const [os, setOs] = useState<ResolveOs>(detectedOs);
+
+  return (
+    <div
+      className="fixed inset-0 z-[55] bg-ink-950/75 backdrop-blur-sm flex items-center justify-center p-6 fade-in"
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-[520px] max-w-full rounded-xl bg-ink-900 border border-ink-700 shadow-2xl shadow-ink-950/80 overflow-hidden pop-in"
+      >
+        <header className="px-5 py-4 border-b border-ink-800 flex items-center gap-3">
+          <div className="size-9 rounded-lg bg-sage-500/20 text-sage-400 flex items-center justify-center">
+            <Clapperboard className="size-4" />
+          </div>
+          <div className="flex-1">
+            <div className="font-medium text-ink-50">Exported for Resolve</div>
+            <div
+              className="text-[12px] font-mono text-ink-300 mt-0.5 truncate"
+              title={filename}
+            >
+              {filename}
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="size-8 rounded-md hover:bg-ink-800 text-ink-300 hover:text-ink-50 flex items-center justify-center"
+          >
+            <X className="size-4" />
+          </button>
+        </header>
+
+        <div className="px-5 py-4 space-y-4">
+          <div className="grid grid-cols-3 gap-3 text-center">
+            <Stat label="Beats" value={summary.beats.toString()} />
+            <Stat
+              label="Clips"
+              value={summary.uniqueClips.toString()}
+              hint={
+                summary.totalRefs !== summary.uniqueClips
+                  ? `${summary.totalRefs} refs`
+                  : undefined
+              }
+            />
+            <Stat
+              label="Empty beats"
+              value={summary.emptyBeats.toString()}
+              tone={summary.emptyBeats > 0 ? "muted" : undefined}
+            />
+          </div>
+
+          <div className="inline-flex w-full rounded-lg border border-ink-800 bg-ink-950 p-0.5 text-[13px]">
+            <button
+              onClick={() => setMethod("studio")}
+              className={clsx(
+                "flex-1 px-3 py-1.5 rounded-md transition font-medium",
+                method === "studio"
+                  ? "bg-ink-800 text-ink-50"
+                  : "text-ink-300 hover:text-ink-50"
+              )}
+            >
+              Studio · one-click
+            </button>
+            <button
+              onClick={() => setMethod("console")}
+              className={clsx(
+                "flex-1 px-3 py-1.5 rounded-md transition font-medium",
+                method === "console"
+                  ? "bg-ink-800 text-ink-50"
+                  : "text-ink-300 hover:text-ink-50"
+              )}
+            >
+              Free · paste in Console
+            </button>
+          </div>
+
+          {method === "studio" ? (
+            <ol className="list-decimal pl-5 space-y-1.5 text-ink-200 text-[13px] leading-relaxed">
+              <li>
+                Save the{" "}
+                <span className="font-mono text-ink-100">.py</span> into your
+                Scripts folder:
+                <div className="mt-1 flex items-baseline gap-2">
+                  <span className="font-mono text-[11px] text-ink-100 break-all">
+                    {SCRIPTS_PATH[os]}
+                  </span>
+                </div>
+                <div className="mt-1 text-[11px] text-ink-500">
+                  {OS_LABEL[os]}.{" "}
+                  {(["mac", "win", "linux"] as ResolveOs[])
+                    .filter((o) => o !== os)
+                    .map((o, i, arr) => (
+                      <span key={o}>
+                        <button
+                          onClick={() => setOs(o)}
+                          className="underline hover:text-ink-200"
+                        >
+                          {OS_LABEL[o]}
+                        </button>
+                        {i < arr.length - 1 ? " · " : ""}
+                      </span>
+                    ))}
+                </div>
+              </li>
+              <li>
+                <strong>Workspace → Scripts → Edit</strong>, click the script
+                name.
+              </li>
+            </ol>
+          ) : (
+            <ol className="list-decimal pl-5 space-y-1.5 text-ink-200 text-[13px] leading-relaxed">
+              <li>
+                <strong>Workspace → Console</strong>, switch to the{" "}
+                <strong>Py3</strong> tab.
+              </li>
+              <li>
+                Open the{" "}
+                <span className="font-mono text-ink-100">.py</span>, copy all,
+                paste, press{" "}
+                <kbd className="px-1 rounded bg-ink-800 text-ink-100">
+                  Enter
+                </kbd>
+                .
+              </li>
+            </ol>
+          )}
+
+          <div className="text-[12px] text-ink-400 leading-snug">
+            The script picks a folder, imports clips, and fills each beat-bin.
+            Safe to re-run; clips shared by multiple beats get a copy per bin.
+          </div>
+        </div>
+
+        <footer className="px-5 py-3 border-t border-ink-800 flex justify-end">
+          <button
+            onClick={onClose}
+            className="h-9 px-4 rounded-lg bg-accent-400 hover:bg-accent-300 text-ink-950 font-medium text-sm transition"
+          >
+            Got it
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  hint,
+  tone,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  tone?: "muted";
+}) {
+  return (
+    <div className="rounded-lg border border-ink-800 bg-ink-850 px-3 py-2.5">
+      <div
+        className={clsx(
+          "font-mono text-lg",
+          tone === "muted" ? "text-ink-400" : "text-ink-50"
+        )}
+      >
+        {value}
+      </div>
+      <div className="text-[10px] uppercase tracking-wider text-ink-400">
+        {label}
+      </div>
+      {hint && (
+        <div className="text-[10px] text-ink-500 mt-0.5">{hint}</div>
+      )}
+    </div>
   );
 }
