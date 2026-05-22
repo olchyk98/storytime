@@ -14,22 +14,54 @@ interface Props {
 const HEADER_HEIGHT = 64;
 
 export function AnnotationCard({ node, selected, zoom }: Props) {
-  const { updateBoardNode, deleteBoardNodes, pushBoardHistory, selectBoardNodes } =
-    useStore();
+  const {
+    updateBoardNode,
+    deleteBoardNodes,
+    pushBoardHistory,
+    selectBoardNodes,
+    boardNodes,
+  } = useStore();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(node.label);
+
+  // All nodes whose CENTER currently lies inside this annotation's box.
+  // These get selected + dragged together when the title is grabbed.
+  function findContained() {
+    const ax = node.x;
+    const ay = node.y;
+    const ax2 = node.x + node.w;
+    const ay2 = node.y + node.h;
+    const out: { id: string; x: number; y: number }[] = [];
+    for (const n of Object.values(boardNodes)) {
+      if (n.id === node.id) continue;
+      if (n.boardId !== node.boardId) continue;
+      if (n.kind === "arrow") continue;
+      const cx = n.x + (n.w ?? 0) / 2;
+      const cy = n.y + (n.h ?? 0) / 2;
+      if (cx >= ax && cx <= ax2 && cy >= ay && cy <= ay2) {
+        out.push({ id: n.id, x: n.x, y: n.y });
+      }
+    }
+    return out;
+  }
 
   function onHeaderPointerDown(e: React.PointerEvent) {
     if (e.button !== 0) return;
     const target = e.target as HTMLElement;
     if (target.closest("button") || target.closest("input")) return;
     e.stopPropagation();
-    selectBoardNodes([node.id]);
+
+    const contained = findContained();
+    selectBoardNodes([node.id, ...contained.map((c) => c.id)]);
+
     const startClientX = e.clientX;
     const startClientY = e.clientY;
     const startX = node.x;
     const startY = node.y;
+    const childStarts: Record<string, { x: number; y: number }> = {};
+    for (const c of contained) childStarts[c.id] = { x: c.x, y: c.y };
     let started = false;
+
     const onMove = (ev: PointerEvent) => {
       const dx = (ev.clientX - startClientX) / zoom;
       const dy = (ev.clientY - startClientY) / zoom;
@@ -42,10 +74,18 @@ export function AnnotationCard({ node, selected, zoom }: Props) {
         started = true;
         pushBoardHistory();
       }
-      updateBoardNode(node.id, {
-        x: snapToGrid(startX + dx),
-        y: snapToGrid(startY + dy),
-      });
+      const newX = snapToGrid(startX + dx);
+      const newY = snapToGrid(startY + dy);
+      const actualDx = newX - startX;
+      const actualDy = newY - startY;
+      updateBoardNode(node.id, { x: newX, y: newY });
+      for (const c of contained) {
+        const cs = childStarts[c.id];
+        updateBoardNode(c.id, {
+          x: snapToGrid(cs.x + actualDx),
+          y: snapToGrid(cs.y + actualDy),
+        });
+      }
     };
     const onUp = () => {
       window.removeEventListener("pointermove", onMove);
