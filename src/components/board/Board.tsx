@@ -84,6 +84,17 @@ export function Board() {
     from: string;
     to: string;
   } | null>(null);
+  const [viewportSize, setViewportSize] = useState({ w: 0, h: 0 });
+
+  useEffect(() => {
+    function update() {
+      const r = surfaceRef.current?.getBoundingClientRect();
+      if (r) setViewportSize({ w: r.width, h: r.height });
+    }
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
 
   useEffect(() => {
     if (!currentBoardId) ensureBoard();
@@ -171,6 +182,54 @@ export function Board() {
     for (const l of layout) m.set(l.beat.id, l);
     return m;
   }, [layout]);
+
+  // Viewport culling: only render beats / annotations that intersect the
+  // visible area (with margin so small pans don't cause pop-in).
+  const visibleLayout = useMemo(() => {
+    if (!board || viewportSize.w === 0) return layout;
+    const margin = 800 / board.zoom;
+    const left = -board.panX / board.zoom - margin;
+    const top = -board.panY / board.zoom - margin;
+    const right = (viewportSize.w - board.panX) / board.zoom + margin;
+    const bottom = (viewportSize.h - board.panY) / board.zoom + margin;
+    return layout.filter(
+      (l) =>
+        l.x + l.width >= left &&
+        l.x <= right &&
+        l.y + BEAT_HEIGHT >= top &&
+        l.y <= bottom
+    );
+  }, [
+    layout,
+    board?.panX,
+    board?.panY,
+    board?.zoom,
+    viewportSize.w,
+    viewportSize.h,
+  ]);
+
+  const visibleAnnotations = useMemo(() => {
+    if (!board || viewportSize.w === 0) return annotations;
+    const margin = 800 / board.zoom;
+    const left = -board.panX / board.zoom - margin;
+    const top = -board.panY / board.zoom - margin;
+    const right = (viewportSize.w - board.panX) / board.zoom + margin;
+    const bottom = (viewportSize.h - board.panY) / board.zoom + margin;
+    return annotations.filter(
+      (a) =>
+        a.x + a.w >= left &&
+        a.x <= right &&
+        a.y + a.h >= top &&
+        a.y <= bottom
+    );
+  }, [
+    annotations,
+    board?.panX,
+    board?.panY,
+    board?.zoom,
+    viewportSize.w,
+    viewportSize.h,
+  ]);
 
   // Keyboard
   useEffect(() => {
@@ -490,12 +549,13 @@ export function Board() {
           data-board-surface
           className="absolute top-0 left-0"
           style={{
-            transform: `translate(${board.panX}px, ${board.panY}px) scale(${board.zoom})`,
+            transform: `translate3d(${board.panX}px, ${board.panY}px, 0) scale(${board.zoom})`,
             transformOrigin: "0 0",
+            willChange: "transform",
           }}
         >
           {/* Annotations render BEHIND beats and arrows */}
-          {annotations.map((a) => (
+          {visibleAnnotations.map((a) => (
             <AnnotationCard
               key={a.id}
               node={a}
@@ -528,7 +588,7 @@ export function Board() {
             pendingConn={pendingConn}
           />
 
-          {layout.map((l) => (
+          {visibleLayout.map((l) => (
             <BeatCard
               key={l.beat.id}
               beat={l.beat}
@@ -629,16 +689,16 @@ function BeatCard({
   onEdit: () => void;
   onConnectStart: (e: React.PointerEvent) => void;
 }) {
-  const {
-    clips,
-    levels,
-    levelValues,
-    openGroupModal,
-    cloneBeat,
-    boardNodes,
-    updateBoardNode,
-    pushBoardHistory,
-  } = useStore();
+  // Each subscription is scoped so pan/zoom or unrelated state changes don't
+  // re-render every beat card.
+  const clips = useStore((s) => s.clips);
+  const levels = useStore((s) => s.levels);
+  const levelValues = useStore((s) => s.levelValues);
+  const openGroupModal = useStore((s) => s.openGroupModal);
+  const cloneBeat = useStore((s) => s.cloneBeat);
+  const boardNodes = useStore((s) => s.boardNodes);
+  const updateBoardNode = useStore((s) => s.updateBoardNode);
+  const pushBoardHistory = useStore((s) => s.pushBoardHistory);
   const suppressClickRef = useRef(false);
 
   function onHeaderPointerDown(e: React.PointerEvent) {
@@ -739,12 +799,18 @@ function BeatCard({
   return (
     <div
       className={clsx(
-        "absolute rounded-xl border-2 bg-ink-900/95 backdrop-blur-sm flex flex-col overflow-hidden shadow-lg shadow-ink-950/40 transition-colors",
+        "absolute rounded-xl border-2 bg-ink-900 flex flex-col overflow-hidden shadow-lg shadow-ink-950/40 transition-colors",
         isConnectHoverTarget
           ? "border-accent-400 ring-2 ring-accent-400/60"
           : "border-ink-700 hover:border-ink-600"
       )}
-      style={{ left: x, top: y, width, height: BEAT_HEIGHT }}
+      style={{
+        left: x,
+        top: y,
+        width,
+        height: BEAT_HEIGHT,
+        contain: "layout style paint",
+      }}
     >
       {/* Header — drag handle for moving the beat */}
       <div

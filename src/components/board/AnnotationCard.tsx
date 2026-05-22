@@ -14,13 +14,11 @@ interface Props {
 const HEADER_HEIGHT = 64;
 
 export function AnnotationCard({ node, selected, zoom }: Props) {
-  const {
-    updateBoardNode,
-    deleteBoardNodes,
-    pushBoardHistory,
-    selectBoardNodes,
-    boardNodes,
-  } = useStore();
+  const updateBoardNode = useStore((s) => s.updateBoardNode);
+  const deleteBoardNodes = useStore((s) => s.deleteBoardNodes);
+  const pushBoardHistory = useStore((s) => s.pushBoardHistory);
+  const selectBoardNodes = useStore((s) => s.selectBoardNodes);
+  const boardNodes = useStore((s) => s.boardNodes);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(node.label);
 

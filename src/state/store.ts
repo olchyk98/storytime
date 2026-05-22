@@ -228,6 +228,11 @@ function uid() {
   return crypto.randomUUID();
 }
 
+// Module-level scratch for the debounced viewport persistence — keeps
+// pan/zoom drags off the IndexedDB hot path.
+let viewportPersistTimer: number | null = null;
+let viewportPersistPending: Board | null = null;
+
 // throttle thumb extraction
 class ThumbQueue {
   private q: string[] = [];
@@ -1053,7 +1058,16 @@ export const useStore = create<StoreState>((set, get) => {
       if (!b) return;
       const u = { ...b, panX, panY, zoom };
       set({ boards: { ...get().boards, [boardId]: u } });
-      db.putOne("boards", u);
+      // Defer DB write so a continuous pan/zoom drag doesn't hammer IndexedDB.
+      viewportPersistPending = u;
+      if (viewportPersistTimer !== null) clearTimeout(viewportPersistTimer);
+      viewportPersistTimer = window.setTimeout(() => {
+        if (viewportPersistPending) {
+          db.putOne("boards", viewportPersistPending);
+          viewportPersistPending = null;
+        }
+        viewportPersistTimer = null;
+      }, 250);
     },
 
     createGroupNode(boardId, x, y, w, h) {
