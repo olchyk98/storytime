@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import clsx from "clsx";
 import { Trash2 } from "lucide-react";
 import type { BoardAnnotationNode } from "../../types";
@@ -8,12 +8,19 @@ import { snapToGrid } from "../../lib/beatLayout";
 interface Props {
   node: BoardAnnotationNode;
   selected: boolean;
-  zoom: number;
 }
 
 const HEADER_HEIGHT = 64;
 
-export function AnnotationCard({ node, selected, zoom }: Props) {
+function currentZoom(): number {
+  const s = useStore.getState();
+  return s.boards[s.currentBoardId ?? ""]?.zoom ?? 1;
+}
+
+export const AnnotationCard = memo(function AnnotationCard({
+  node,
+  selected,
+}: Props) {
   const updateBoardNode = useStore((s) => s.updateBoardNode);
   const deleteBoardNodes = useStore((s) => s.deleteBoardNodes);
   const pushBoardHistory = useStore((s) => s.pushBoardHistory);
@@ -56,13 +63,14 @@ export function AnnotationCard({ node, selected, zoom }: Props) {
     const startClientY = e.clientY;
     const startX = node.x;
     const startY = node.y;
+    const dragZoom = currentZoom();
     const childStarts: Record<string, { x: number; y: number }> = {};
     for (const c of contained) childStarts[c.id] = { x: c.x, y: c.y };
     let started = false;
 
     const onMove = (ev: PointerEvent) => {
-      const dx = (ev.clientX - startClientX) / zoom;
-      const dy = (ev.clientY - startClientY) / zoom;
+      const dx = (ev.clientX - startClientX) / dragZoom;
+      const dy = (ev.clientY - startClientY) / dragZoom;
       if (
         !started &&
         Math.abs(ev.clientX - startClientX) + Math.abs(ev.clientY - startClientY) < 4
@@ -101,10 +109,11 @@ export function AnnotationCard({ node, selected, zoom }: Props) {
     const startClientY = e.clientY;
     const startW = node.w;
     const startH = node.h;
+    const dragZoom = currentZoom();
     let started = false;
     const onMove = (ev: PointerEvent) => {
-      const dx = (ev.clientX - startClientX) / zoom;
-      const dy = (ev.clientY - startClientY) / zoom;
+      const dx = (ev.clientX - startClientX) / dragZoom;
+      const dy = (ev.clientY - startClientY) / dragZoom;
       if (
         !started &&
         Math.abs(ev.clientX - startClientX) + Math.abs(ev.clientY - startClientY) < 4
@@ -212,4 +221,4 @@ export function AnnotationCard({ node, selected, zoom }: Props) {
       )}
     </div>
   );
-}
+});

@@ -581,7 +581,6 @@ export function Board() {
               key={a.id}
               node={a}
               selected={boardSelectedIds.has(a.id)}
-              zoom={board.zoom}
             />
           ))}
 
@@ -618,7 +617,6 @@ export function Board() {
               width={l.width}
               index={l.index}
               isConnectHoverTarget={pendingConn?.hoverTargetId === l.beat.id}
-              zoom={board.zoom}
               onEdit={setEditingBeatId}
               onConnectStart={onConnectStart}
             />
@@ -712,7 +710,6 @@ const BeatCard = memo(function BeatCard({
   width,
   index,
   isConnectHoverTarget,
-  zoom,
   onEdit,
   onConnectStart,
 }: {
@@ -722,7 +719,6 @@ const BeatCard = memo(function BeatCard({
   width: number;
   index: number;
   isConnectHoverTarget: boolean;
-  zoom: number;
   onEdit: (id: string) => void;
   onConnectStart: (e: React.PointerEvent, id: string) => void;
 }) {
@@ -746,10 +742,14 @@ const BeatCard = memo(function BeatCard({
     const startClientY = e.clientY;
     const startX = beat.x;
     const startY = beat.y;
+    // Capture zoom at drag-start — avoids needing it as a re-rendering prop.
+    const startState = useStore.getState();
+    const dragZoom =
+      startState.boards[startState.currentBoardId ?? ""]?.zoom ?? 1;
     let started = false;
     const onMove = (ev: PointerEvent) => {
-      const dx = (ev.clientX - startClientX) / zoom;
-      const dy = (ev.clientY - startClientY) / zoom;
+      const dx = (ev.clientX - startClientX) / dragZoom;
+      const dy = (ev.clientY - startClientY) / dragZoom;
       if (!started) {
         if (Math.abs(ev.clientX - startClientX) + Math.abs(ev.clientY - startClientY) < 4)
           return;
