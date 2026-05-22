@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import { Check, Film, Sparkles } from "lucide-react";
 import type { Clip } from "../types";
@@ -9,24 +9,30 @@ import { useDragSelect } from "../lib/useDragSelect";
 
 const HOVER_DELAY_MS = 220;
 
-export function ClipRow({ clip, onOpen }: { clip: Clip; onOpen: () => void }) {
+export const ClipRow = memo(function ClipRow({
+  clip,
+  onOpen,
+}: {
+  clip: Clip;
+  onOpen: (id: string) => void;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const hoverTimer = useRef<number | null>(null);
   const objectUrlRef = useRef<string | null>(null);
-  const {
-    enqueueThumbs,
-    getClipFile,
-    levels,
-    levelValues,
-    selectedClipIds,
-    toggleClipSelected,
-    selectRangeTo,
-  } = useStore();
+  const enqueueThumbs = useStore((s) => s.enqueueThumbs);
+  const getClipFile = useStore((s) => s.getClipFile);
+  const levels = useStore((s) => s.levels);
+  const levelValues = useStore((s) => s.levelValues);
+  const toggleClipSelected = useStore((s) => s.toggleClipSelected);
+  const selectRangeTo = useStore((s) => s.selectRangeTo);
+  const isSelected = useStore((s) => s.selectedClipIds.has(clip.id));
   const [hoverPlaying, setHoverPlaying] = useState(false);
   const drag = useDragSelect(clip.id);
 
-  const isSelected = selectedClipIds.has(clip.id);
+  function handleOpen() {
+    onOpen(clip.id);
+  }
 
   const ext = clip.name.includes(".")
     ? clip.name.slice(clip.name.lastIndexOf(".") + 1).toUpperCase()
@@ -143,7 +149,7 @@ export function ClipRow({ clip, onOpen }: { clip: Clip; onOpen: () => void }) {
       toggleClipSelected(clip.id);
       return;
     }
-    onOpen();
+    handleOpen();
   }
 
   function handleCheckboxClick(e: React.MouseEvent) {
@@ -158,6 +164,10 @@ export function ClipRow({ clip, onOpen }: { clip: Clip; onOpen: () => void }) {
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       onClick={handleClick}
+      style={{
+        contentVisibility: "auto",
+        containIntrinsicSize: "100% 72px",
+      }}
       className={clsx(
         "group flex items-center gap-3 px-3 py-2 rounded-lg border transition cursor-pointer pop-in select-none",
         isSelected
@@ -251,4 +261,4 @@ export function ClipRow({ clip, onOpen }: { clip: Clip; onOpen: () => void }) {
       </div>
     </div>
   );
-}
+});

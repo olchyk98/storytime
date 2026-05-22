@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import { Check, Film, Sparkles } from "lucide-react";
 import type { Clip } from "../types";
@@ -9,24 +9,33 @@ import { useDragSelect } from "../lib/useDragSelect";
 
 const HOVER_DELAY_MS = 220;
 
-export function ClipCard({ clip, onOpen }: { clip: Clip; onOpen: () => void }) {
+export const ClipCard = memo(function ClipCard({
+  clip,
+  onOpen,
+}: {
+  clip: Clip;
+  onOpen: (id: string) => void;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const hoverTimer = useRef<number | null>(null);
   const objectUrlRef = useRef<string | null>(null);
-  const {
-    enqueueThumbs,
-    getClipFile,
-    levels,
-    levelValues,
-    selectedClipIds,
-    toggleClipSelected,
-    selectRangeTo,
-  } = useStore();
+  // Scoped selectors so unrelated state changes don't re-render this card.
+  // The crucial one is `isSelected`: per-card boolean means the only cards
+  // that re-render on a selection update are the ones whose membership flipped.
+  const enqueueThumbs = useStore((s) => s.enqueueThumbs);
+  const getClipFile = useStore((s) => s.getClipFile);
+  const levels = useStore((s) => s.levels);
+  const levelValues = useStore((s) => s.levelValues);
+  const toggleClipSelected = useStore((s) => s.toggleClipSelected);
+  const selectRangeTo = useStore((s) => s.selectRangeTo);
+  const isSelected = useStore((s) => s.selectedClipIds.has(clip.id));
   const [hoverPlaying, setHoverPlaying] = useState(false);
   const drag = useDragSelect(clip.id);
 
-  const isSelected = selectedClipIds.has(clip.id);
+  function handleOpen() {
+    onOpen(clip.id);
+  }
 
   const ext = clip.name.includes(".")
     ? clip.name.slice(clip.name.lastIndexOf(".") + 1).toUpperCase()
@@ -143,7 +152,7 @@ export function ClipCard({ clip, onOpen }: { clip: Clip; onOpen: () => void }) {
       toggleClipSelected(clip.id);
       return;
     }
-    onOpen();
+    handleOpen();
   }
 
   function handleCheckboxClick(e: React.MouseEvent) {
@@ -156,6 +165,12 @@ export function ClipCard({ clip, onOpen }: { clip: Clip; onOpen: () => void }) {
       ref={ref}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
+      style={{
+        // Lets the browser skip layout/paint for offscreen cards until they
+        // scroll into view. The intrinsic size keeps the grid layout stable.
+        contentVisibility: "auto",
+        containIntrinsicSize: "280px 240px",
+      }}
       className={clsx(
         "group relative rounded-xl bg-ink-900 border overflow-hidden transition pop-in",
         isSelected
@@ -265,4 +280,4 @@ export function ClipCard({ clip, onOpen }: { clip: Clip; onOpen: () => void }) {
       </div>
     </div>
   );
-}
+});

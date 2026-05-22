@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
 import {
   ArrowDownAZ,
@@ -72,17 +72,16 @@ function selectionTitle(
 }
 
 export function ClipGrid() {
-  const {
-    selection,
-    visibleClips,
-    clips,
-    levels,
-    levelValues,
-    selectedClipIds,
-    clearSelection,
-    selectAllVisible,
-    previewClipId,
-  } = useStore();
+  // Scoped subscriptions: avoid re-rendering this whole component (and its
+  // 500+ children) on every drag-select tick.
+  const selection = useStore((s) => s.selection);
+  const visibleClips = useStore((s) => s.visibleClips);
+  const clips = useStore((s) => s.clips);
+  const levels = useStore((s) => s.levels);
+  const levelValues = useStore((s) => s.levelValues);
+  const clearSelection = useStore((s) => s.clearSelection);
+  const selectAllVisible = useStore((s) => s.selectAllVisible);
+  const previewClipId = useStore((s) => s.previewClipId);
   const [q, setQ] = useState("");
   const [sort, setSort] = useLocalStorage<SortKey>("storytime.sort", "name-asc");
   const [view, setView] = useLocalStorage<ViewMode>("storytime.view", "grid");
@@ -141,7 +140,9 @@ export function ClipGrid() {
     function onKey(e: KeyboardEvent) {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)
         return;
-      if (e.key === "Escape" && selectedClipIds.size > 0 && !previewClipId) {
+      // Read selection size lazily so this effect doesn't re-subscribe.
+      const hasSelection = useStore.getState().selectedClipIds.size > 0;
+      if (e.key === "Escape" && hasSelection && !previewClipId) {
         clearSelection();
       } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a" && !previewClipId) {
         e.preventDefault();
@@ -150,7 +151,7 @@ export function ClipGrid() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectedClipIds.size, clearSelection, selectAllVisible, previewClipId]);
+  }, [clearSelection, selectAllVisible, previewClipId]);
 
   return (
     <div className="flex-1 flex flex-col min-h-0 min-w-0 relative">
@@ -275,16 +276,24 @@ export function ClipGrid() {
   );
 }
 
-function ClipItem({ id, view }: { id: string; view: "grid" | "list" }) {
+const ClipItem = memo(function ClipItem({
+  id,
+  view,
+}: {
+  id: string;
+  view: "grid" | "list";
+}) {
   const clip = useStore((s) => s.clips[id]);
   const openPreview = useStore((s) => s.openPreview);
   if (!clip) return null;
+  // `openPreview` is a stable action ref, so React.memo on ClipCard/Row can
+  // safely skip re-renders.
   return view === "grid" ? (
-    <ClipCard clip={clip} onOpen={() => openPreview(clip.id)} />
+    <ClipCard clip={clip} onOpen={openPreview} />
   ) : (
-    <ClipRow clip={clip} onOpen={() => openPreview(clip.id)} />
+    <ClipRow clip={clip} onOpen={openPreview} />
   );
-}
+});
 
 function Stat({
   label,
