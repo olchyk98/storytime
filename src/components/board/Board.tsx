@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import {
   Copy,
@@ -30,6 +30,7 @@ interface BeatLayout {
   x: number;
   y: number;
   width: number;
+  index: number;
 }
 
 interface PendingConnection {
@@ -37,6 +38,24 @@ interface PendingConnection {
   worldX: number;
   worldY: number;
   hoverTargetId: string | null;
+}
+
+function hitTestLayout(
+  layout: BeatLayout[],
+  worldX: number,
+  worldY: number
+): string | null {
+  for (const l of layout) {
+    if (
+      worldX >= l.x &&
+      worldX <= l.x + l.width &&
+      worldY >= l.y &&
+      worldY <= l.y + BEAT_HEIGHT
+    ) {
+      return l.beat.id;
+    }
+  }
+  return null;
 }
 
 function clientToWorld(
@@ -402,24 +421,22 @@ export function Board() {
     window.addEventListener("pointerup", onUp);
   }
 
-  function hitTestBeat(worldX: number, worldY: number): string | null {
-    for (const l of layout) {
-      if (
-        worldX >= l.x &&
-        worldX <= l.x + l.width &&
-        worldY >= l.y &&
-        worldY <= l.y + BEAT_HEIGHT
-      ) {
-        return l.beat.id;
-      }
-    }
-    return null;
-  }
 
-  function onConnectStart(e: React.PointerEvent, sourceBeatId: string) {
+  // Pack closure-captured state into refs so the connect handler stays
+  // identity-stable for React.memo on BeatCard.
+  const boardRef = useRef(board);
+  boardRef.current = board;
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+
+  const onConnectStart = useCallback(function onConnectStart(
+    e: React.PointerEvent,
+    sourceBeatId: string
+  ) {
+    const board = boardRef.current;
     if (!board) return;
-    e.stopPropagation();
     if (e.button !== 0) return;
+    e.stopPropagation();
     const rect = surfaceRef.current!.getBoundingClientRect();
     const initial = clientToWorld(
       e.clientX,
@@ -437,15 +454,17 @@ export function Board() {
     });
 
     const onMove = (ev: PointerEvent) => {
+      const b = boardRef.current;
+      if (!b) return;
       const pt = clientToWorld(
         ev.clientX,
         ev.clientY,
         rect,
-        board.panX,
-        board.panY,
-        board.zoom
+        b.panX,
+        b.panY,
+        b.zoom
       );
-      const hover = hitTestBeat(pt.x, pt.y);
+      const hover = hitTestLayout(layoutRef.current, pt.x, pt.y);
       setPendingConn((prev) =>
         prev
           ? {
@@ -461,15 +480,17 @@ export function Board() {
     const onUp = (ev: PointerEvent) => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      const b = boardRef.current;
+      if (!b) return;
       const pt = clientToWorld(
         ev.clientX,
         ev.clientY,
         rect,
-        board.panX,
-        board.panY,
-        board.zoom
+        b.panX,
+        b.panY,
+        b.zoom
       );
-      const target = hitTestBeat(pt.x, pt.y);
+      const target = hitTestLayout(layoutRef.current, pt.x, pt.y);
       if (target && target !== sourceBeatId) {
         useStore.getState().connectBeats(sourceBeatId, target);
       }
@@ -477,7 +498,7 @@ export function Board() {
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
-  }
+  }, []);
 
   if (!board) {
     return (
@@ -595,10 +616,11 @@ export function Board() {
               x={l.x}
               y={l.y}
               width={l.width}
+              index={l.index}
               isConnectHoverTarget={pendingConn?.hoverTargetId === l.beat.id}
               zoom={board.zoom}
-              onEdit={() => setEditingBeatId(l.beat.id)}
-              onConnectStart={(e) => onConnectStart(e, l.beat.id)}
+              onEdit={setEditingBeatId}
+              onConnectStart={onConnectStart}
             />
           ))}
         </div>
@@ -655,6 +677,13 @@ function buildLayout(
   levelValues: Record<string, import("../../types").LevelValue>,
   clips: Record<string, import("../../types").Clip>
 ): BeatLayout[] {
+  // Stable per-beat index based on `order` so sequence numbers don't change
+  // unless the order itself changes.
+  const sortedForIndex = [...beats].sort(
+    (a, b) => (a.order ?? 0) - (b.order ?? 0)
+  );
+  const indexById = new Map<string, number>();
+  sortedForIndex.forEach((b, i) => indexById.set(b.id, i + 1));
   return beats.map((b) => {
     const matching = clipsMatchingGroup(clips, b.tags);
     const excludedSet = new Set(b.excludedClipIds ?? []);
@@ -666,15 +695,22 @@ function buildLayout(
       includedCount,
       excludedSet.size
     );
-    return { beat: b, x: b.x, y: b.y, width };
+    return {
+      beat: b,
+      x: b.x,
+      y: b.y,
+      width,
+      index: indexById.get(b.id) ?? 0,
+    };
   });
 }
 
-function BeatCard({
+const BeatCard = memo(function BeatCard({
   beat,
   x,
   y,
   width,
+  index,
   isConnectHoverTarget,
   zoom,
   onEdit,
@@ -684,10 +720,11 @@ function BeatCard({
   x: number;
   y: number;
   width: number;
+  index: number;
   isConnectHoverTarget: boolean;
   zoom: number;
-  onEdit: () => void;
-  onConnectStart: (e: React.PointerEvent) => void;
+  onEdit: (id: string) => void;
+  onConnectStart: (e: React.PointerEvent, id: string) => void;
 }) {
   // Each subscription is scoped so pan/zoom or unrelated state changes don't
   // re-render every beat card.
@@ -696,7 +733,6 @@ function BeatCard({
   const levelValues = useStore((s) => s.levelValues);
   const openGroupModal = useStore((s) => s.openGroupModal);
   const cloneBeat = useStore((s) => s.cloneBeat);
-  const boardNodes = useStore((s) => s.boardNodes);
   const updateBoardNode = useStore((s) => s.updateBoardNode);
   const pushBoardHistory = useStore((s) => s.pushBoardHistory);
   const suppressClickRef = useRef(false);
@@ -746,23 +782,6 @@ function BeatCard({
       e.preventDefault();
     }
   }
-
-  // Compute this beat's "rank index" via the layout-aware count is too heavy;
-  // a simple sequence number is just its order field for display.
-  const allBeats = useMemo(
-    () =>
-      Object.values(boardNodes).filter(
-        (n): n is BoardGroupNode =>
-          n.boardId === beat.boardId && n.kind === "group"
-      ),
-    [boardNodes, beat.boardId]
-  );
-  const indexNumber = useMemo(() => {
-    const sorted = [...allBeats].sort(
-      (a, b) => (a.order ?? 0) - (b.order ?? 0)
-    );
-    return sorted.findIndex((b) => b.id === beat.id) + 1;
-  }, [allBeats, beat.id]);
 
   const matching = useMemo(
     () => clipsMatchingGroup(clips, beat.tags),
@@ -819,11 +838,11 @@ function BeatCard({
         onClickCapture={onHeaderClickCapture}
       >
         <span className="text-[10px] font-mono text-ink-500 tabular-nums w-5 text-right">
-          {indexNumber}
+          {index}
         </span>
         <div
           className="flex-1 text-sm font-medium text-ink-50 truncate cursor-pointer"
-          onClick={onEdit}
+          onClick={() => onEdit(beat.id)}
           title={beat.label}
         >
           {beat.label || "Untitled"}
@@ -836,7 +855,7 @@ function BeatCard({
           <Copy className="size-3.5" />
         </button>
         <button
-          onClick={onEdit}
+          onClick={() => onEdit(beat.id)}
           className="size-6 rounded hover:bg-ink-800 text-ink-300 hover:text-ink-50 flex items-center justify-center"
           title="Edit beat"
         >
@@ -877,7 +896,10 @@ function BeatCard({
         </span>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-hidden p-2" onClick={onEdit}>
+      <div
+        className="flex-1 min-h-0 overflow-hidden p-2"
+        onClick={() => onEdit(beat.id)}
+      >
         {sorted.length === 0 ? (
           <div className="size-full rounded-lg border-2 border-dashed border-ink-800 flex items-center justify-center text-[11px] text-ink-500 px-3 text-center cursor-pointer">
             {hasFilter ? "No matching clips" : "Click to configure"}
@@ -918,10 +940,10 @@ function BeatCard({
       </div>
 
       {/* Connection dot on the right edge */}
-      <ConnectDot onPointerDown={onConnectStart} />
+      <ConnectDot onPointerDown={(e) => onConnectStart(e, beat.id)} />
     </div>
   );
-}
+});
 
 function ConnectDot({
   onPointerDown,
