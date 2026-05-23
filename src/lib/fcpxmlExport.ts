@@ -9,6 +9,10 @@ export interface FcpxmlExportSummary {
   // Clips without detected fps (defaulted to 30 in the FCPXML). Re-link will
   // reject them if the real file's fps differs.
   missingFpsCount: number;
+  // Clips whose audio presence hasn't been detected. Defaulted to hasAudio=1.
+  // If the real file is silent (drone footage, screen recordings) FCP rejects
+  // the relink.
+  missingAudioCount: number;
 }
 
 export interface FcpxmlExportResult {
@@ -177,10 +181,16 @@ export function generateFcpxmlExport(opts: {
     const uid = fcpUid(c.name);
     const duration = fcpDuration(c.durationMs, profile);
     const src = `file:///${escapeXml(c.name)}`;
+    // Default to hasAudio=1 only when unknown. Detected silent clips (drones,
+    // screen recordings) must declare hasAudio=0 so FCP doesn't reject relink.
+    const audioAttrs =
+      c.hasAudio === false
+        ? `hasAudio="0"`
+        : `hasAudio="1" audioSources="1" audioChannels="2" audioRate="48000"`;
     lines.push(
       `        <asset id="${assetId}" name="${escapeXml(
         name
-      )}" uid="${uid}" start="0s" duration="${duration}" hasVideo="1" hasAudio="1" format="${formatId}" videoSources="1" audioSources="1" audioChannels="2" audioRate="48000">`
+      )}" uid="${uid}" start="0s" duration="${duration}" hasVideo="1" ${audioAttrs} format="${formatId}" videoSources="1">`
     );
     lines.push(
       `            <media-rep kind="original-media" sig="${uid}" src="${src}"/>`
@@ -213,6 +223,10 @@ export function generateFcpxmlExport(opts: {
     (n, c) => n + (c.fps === undefined ? 1 : 0),
     0
   );
+  const missingAudioCount = assets.reduce(
+    (n, c) => n + (c.hasAudio === undefined ? 1 : 0),
+    0
+  );
 
   return {
     xml: lines.join("\n"),
@@ -222,6 +236,7 @@ export function generateFcpxmlExport(opts: {
       totalRefs,
       emptyEvents,
       missingFpsCount,
+      missingAudioCount,
     },
   };
 }

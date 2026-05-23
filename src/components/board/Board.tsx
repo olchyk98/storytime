@@ -1548,14 +1548,28 @@ function FcpxmlExportDialog({
             </li>
           </ol>
 
-          {summary.missingFpsCount > 0 && (
-            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-200 leading-snug">
-              <strong>{summary.missingFpsCount}</strong> of {summary.uniqueClips}{" "}
-              clips don't have a detected frame rate yet — they'll default to
-              30 fps in the FCPXML. FCP will refuse to relink them if the real
-              file's fps is different (24, 50, 60, etc.). Browse those clips in
-              the grid (or wait for thumbs to fill in) to backfill fps, then
-              re-export.
+          {(summary.missingFpsCount > 0 || summary.missingAudioCount > 0) && (
+            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-200 leading-snug space-y-1">
+              {summary.missingFpsCount > 0 && (
+                <div>
+                  <strong>{summary.missingFpsCount}</strong> /{" "}
+                  {summary.uniqueClips} clips lack a detected frame rate —
+                  defaulted to 30 fps. FCP rejects relink if the real file's
+                  fps differs.
+                </div>
+              )}
+              {summary.missingAudioCount > 0 && (
+                <div>
+                  <strong>{summary.missingAudioCount}</strong> /{" "}
+                  {summary.uniqueClips} clips lack a detected audio flag —
+                  defaulted to <em>has audio</em>. FCP rejects relink if the
+                  real file is silent (drones, screen recordings).
+                </div>
+              )}
+              <div className="text-amber-300/80">
+                Wait for the background extraction to finish (Topbar progress
+                bar), then re-export.
+              </div>
             </div>
           )}
 

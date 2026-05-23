@@ -58,7 +58,7 @@ export const ClipCard = memo(function ClipCard({
     if (clip.thumbFailed) return;
     // Enqueue when EITHER thumb or fps is missing, so older clips backfill
     // their fps for FCPXML export.
-    if (clip.thumb && clip.fps !== undefined) return;
+    if (clip.thumb && clip.fps !== undefined && clip.hasAudio !== undefined) return;
     const el = ref.current;
     if (!el) return;
     const io = new IntersectionObserver(
@@ -74,7 +74,7 @@ export const ClipCard = memo(function ClipCard({
     );
     io.observe(el);
     return () => io.disconnect();
-  }, [clip.id, clip.thumb, clip.fps, clip.thumbFailed, enqueueThumbs]);
+  }, [clip.id, clip.thumb, clip.fps, clip.hasAudio, clip.thumbFailed, enqueueThumbs]);
 
   function teardownHover() {
     if (hoverTimer.current) {

@@ -115,6 +115,10 @@ export interface Clip {
   // Detected frame rate (e.g. 29.97, 30, 59.94, 60). Used by FCPXML export to
   // emit per-fps <format> entries so relink doesn't reject mixed-fps shoots.
   fps?: number;
+  // True/false from audio-byte-count probe during scan. Used by FCPXML export
+  // so audio-less footage (drones, screen recordings) doesn't get hasAudio=1
+  // and fail relink.
+  hasAudio?: boolean;
   thumb?: string;   // data URL
   thumbFailed?: boolean;
   // user-state

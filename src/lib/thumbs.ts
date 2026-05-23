@@ -62,12 +62,46 @@ async function detectFps(video: HTMLVideoElement): Promise<number | undefined> {
   });
 }
 
+// Detect audio presence on a loaded video element. Primary signal:
+// video.captureStream() exposes a MediaStream whose audio-track count is
+// authoritative (works regardless of muted state). Fallbacks cover older
+// browsers. We always return a boolean so callers can persist the result
+// and break out of "re-enqueue forever" loops on undecidable clips.
+function detectHasAudio(video: HTMLVideoElement): boolean {
+  const v = video as HTMLVideoElement & {
+    captureStream?: () => MediaStream;
+    webkitAudioDecodedByteCount?: number;
+    audioTracks?: { length: number };
+    mozHasAudio?: boolean;
+  };
+  try {
+    if (typeof v.captureStream === "function") {
+      const stream = v.captureStream();
+      return stream.getAudioTracks().length > 0;
+    }
+  } catch {
+    /* fall through */
+  }
+  if (typeof v.webkitAudioDecodedByteCount === "number") {
+    return v.webkitAudioDecodedByteCount > 0;
+  }
+  if (v.audioTracks && typeof v.audioTracks.length === "number") {
+    return v.audioTracks.length > 0;
+  }
+  if (typeof v.mozHasAudio === "boolean") return v.mozHasAudio;
+  // Truly undetectable — default to "has audio" so FCP doesn't reject
+  // relink when the file actually does have audio. Drone-only files will
+  // still get the correct false from captureStream.
+  return true;
+}
+
 export async function extractThumb(file: File): Promise<{
   dataUrl: string;
   durationMs: number;
   width: number;
   height: number;
   fps?: number;
+  hasAudio: boolean;
 } | null> {
   const url = URL.createObjectURL(file);
   try {
@@ -116,8 +150,10 @@ export async function extractThumb(file: File): Promise<{
     ctx.drawImage(video, 0, 0, cw, ch);
     const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
 
-    // Measure fps with a brief play before tearing down.
+    // Measure fps with a brief play before tearing down. The same play also
+    // primes the audio decoder so we can read the audio-byte counter after.
     const fps = await detectFps(video).catch(() => undefined);
+    const hasAudio = detectHasAudio(video);
 
     return {
       dataUrl,
@@ -125,6 +161,7 @@ export async function extractThumb(file: File): Promise<{
       width: vw,
       height: vh,
       fps,
+      hasAudio,
     };
   } catch {
     return null;

@@ -53,7 +53,7 @@ export const ClipRow = memo(function ClipRow({
 
   useEffect(() => {
     if (clip.thumbFailed) return;
-    if (clip.thumb && clip.fps !== undefined) return;
+    if (clip.thumb && clip.fps !== undefined && clip.hasAudio !== undefined) return;
     const el = ref.current;
     if (!el) return;
     const io = new IntersectionObserver(
@@ -69,7 +69,7 @@ export const ClipRow = memo(function ClipRow({
     );
     io.observe(el);
     return () => io.disconnect();
-  }, [clip.id, clip.thumb, clip.fps, clip.thumbFailed, enqueueThumbs]);
+  }, [clip.id, clip.thumb, clip.fps, clip.hasAudio, clip.thumbFailed, enqueueThumbs]);
 
   function teardownHover() {
     if (hoverTimer.current) {

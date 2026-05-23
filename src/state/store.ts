@@ -523,7 +523,7 @@ export const useStore = create<StoreState>((set, get) => {
         // Enqueue any clip that's missing thumb or fps for background
         // extraction. ensureThumb handles both in a single pass.
         const needsExtraction = Object.values(next)
-          .filter((c) => !c.thumbFailed && (!c.thumb || c.fps === undefined))
+          .filter((c) => !c.thumbFailed && (!c.thumb || c.fps === undefined || c.hasAudio === undefined))
           .map((c) => c.id);
         if (needsExtraction.length > 0) thumbQueue.push(needsExtraction);
       })();
@@ -614,7 +614,7 @@ export const useStore = create<StoreState>((set, get) => {
       // ensureThumb action handles both cases (re-extracts thumb if needed
       // and measures fps in the same pass).
       const needsExtraction = Object.values(next)
-        .filter((c) => !c.thumbFailed && (!c.thumb || c.fps === undefined))
+        .filter((c) => !c.thumbFailed && (!c.thumb || c.fps === undefined || c.hasAudio === undefined))
         .map((c) => c.id);
       thumbQueue.push(needsExtraction);
     },
@@ -682,10 +682,11 @@ export const useStore = create<StoreState>((set, get) => {
     async ensureThumb(clipId) {
       const c = get().clips[clipId];
       // Skip when fully complete OR when extraction has already failed.
-      // Clips with a thumb but no fps fall through so we backfill fps for
-      // pre-fps-tracking installs (FCPXML export needs it).
+      // Clips with a thumb but missing fps or hasAudio fall through so we
+      // backfill those fields for pre-existing installs (FCPXML export needs
+      // them — wrong defaults make FCP refuse to relink).
       if (!c || c.thumbFailed) return;
-      if (c.thumb && c.fps !== undefined) return;
+      if (c.thumb && c.fps !== undefined && c.hasAudio !== undefined) return;
       const file = await get().getClipFile(clipId);
       if (!file) return;
       const r = await extractThumb(file);
@@ -702,6 +703,7 @@ export const useStore = create<StoreState>((set, get) => {
         width: r.width,
         height: r.height,
         ...(r.fps !== undefined ? { fps: r.fps } : {}),
+        hasAudio: r.hasAudio,
       };
       set({ clips: { ...get().clips, [clipId]: updated } });
       await db.putOne("clips", { ...updated, thumb: undefined });
