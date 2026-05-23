@@ -1,10 +1,13 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import {
+  ChevronDown,
   Clapperboard,
   Copy,
   Download,
   Expand,
+  Film,
+  FolderOutput,
   Maximize,
   Pencil,
   Plus,
@@ -22,6 +25,11 @@ import {
   generateResolveScript,
   type ResolveExportSummary,
 } from "../../lib/resolveExport";
+import {
+  downloadFcpxml,
+  generateFcpxmlExport,
+  type FcpxmlExportSummary,
+} from "../../lib/fcpxmlExport";
 import {
   BEAT_HEIGHT,
   beatWidthFor,
@@ -116,6 +124,11 @@ export function Board() {
     | null
     | { filename: string; summary: ResolveExportSummary }
   >(null);
+  const [fcpxmlExport, setFcpxmlExport] = useState<
+    | null
+    | { filename: string; summary: FcpxmlExportSummary }
+  >(null);
+  const [editorMenuOpen, setEditorMenuOpen] = useState(false);
 
   useEffect(() => {
     function update() {
@@ -550,29 +563,85 @@ export function Board() {
           <Download className="size-4" />
           Save backup
         </button>
-        <button
-          onClick={() => {
-            const s = useStore.getState();
-            const allBeats = Object.values(s.boardNodes).filter(
-              (n): n is BoardGroupNode => n.kind === "group"
-            );
-            const { script, summary } = generateResolveScript({
-              beats: allBeats,
-              clips: s.clips,
-              projectName: s.meta?.name ?? "storytime",
-            });
-            const filename = downloadResolveScript(
-              script,
-              s.meta?.name ?? "storytime"
-            );
-            setResolveExport({ filename, summary });
-          }}
-          className="h-10 px-3 rounded-lg border border-ink-700 hover:border-ink-600 bg-ink-900/80 backdrop-blur text-ink-200 hover:text-ink-50 text-sm inline-flex items-center gap-2 transition"
-          title="Generate a Resolve console script that builds your bins"
-        >
-          <Clapperboard className="size-4" />
-          To Resolve
-        </button>
+        <div className="relative">
+          <button
+            onClick={() => setEditorMenuOpen((v) => !v)}
+            className="h-10 px-3 rounded-lg border border-ink-700 hover:border-ink-600 bg-ink-900/80 backdrop-blur text-ink-200 hover:text-ink-50 text-sm inline-flex items-center gap-2 transition"
+            title="Export beats to your NLE"
+          >
+            <FolderOutput className="size-4" />
+            To Editor
+            <ChevronDown
+              className={clsx("size-3.5 transition", editorMenuOpen && "rotate-180")}
+            />
+          </button>
+          {editorMenuOpen && (
+            <>
+              <div
+                className="fixed inset-0 z-10"
+                onClick={() => setEditorMenuOpen(false)}
+              />
+              <div className="absolute right-0 top-12 z-20 w-56 rounded-lg bg-ink-850 border border-ink-700 shadow-xl shadow-ink-950/60 p-1 pop-in">
+                <button
+                  onClick={() => {
+                    const s = useStore.getState();
+                    const allBeats = Object.values(s.boardNodes).filter(
+                      (n): n is BoardGroupNode => n.kind === "group"
+                    );
+                    const { xml, summary } = generateFcpxmlExport({
+                      beats: allBeats,
+                      clips: s.clips,
+                      projectName: s.meta?.name ?? "storytime",
+                    });
+                    const filename = downloadFcpxml(
+                      xml,
+                      s.meta?.name ?? "storytime"
+                    );
+                    setFcpxmlExport({ filename, summary });
+                    setEditorMenuOpen(false);
+                  }}
+                  className="w-full flex items-start gap-2.5 px-2 py-2 rounded text-left hover:bg-ink-700 transition"
+                >
+                  <Film className="size-4 mt-0.5 text-ink-300 shrink-0" />
+                  <div className="min-w-0">
+                    <div className="text-sm text-ink-50">Final Cut Pro</div>
+                    <div className="text-[11px] text-ink-400">
+                      .fcpxml · one event per beat
+                    </div>
+                  </div>
+                </button>
+                <button
+                  onClick={() => {
+                    const s = useStore.getState();
+                    const allBeats = Object.values(s.boardNodes).filter(
+                      (n): n is BoardGroupNode => n.kind === "group"
+                    );
+                    const { script, summary } = generateResolveScript({
+                      beats: allBeats,
+                      clips: s.clips,
+                      projectName: s.meta?.name ?? "storytime",
+                    });
+                    const filename = downloadResolveScript(
+                      script,
+                      s.meta?.name ?? "storytime"
+                    );
+                    setResolveExport({ filename, summary });
+                    setEditorMenuOpen(false);
+                  }}
+                  className="w-full flex items-start gap-2.5 px-2 py-2 rounded text-left hover:bg-ink-700 transition"
+                >
+                  <Clapperboard className="size-4 mt-0.5 text-ink-300 shrink-0" />
+                  <div className="min-w-0">
+                    <div className="text-sm text-ink-50">DaVinci Resolve</div>
+                    <div className="text-[11px] text-ink-400">
+                      .py · one bin per beat
+                    </div>
+                  </div>
+                </button>
+              </div>
+            </>
+          )}
+        </div>
         <button
           onClick={startCreatingBeat}
           className="h-10 px-4 rounded-lg bg-accent-400 hover:bg-accent-300 text-ink-950 font-medium text-sm inline-flex items-center gap-2 shadow-lg shadow-accent-400/20 transition"
@@ -706,6 +775,14 @@ export function Board() {
           filename={resolveExport.filename}
           summary={resolveExport.summary}
           onClose={() => setResolveExport(null)}
+        />
+      )}
+
+      {fcpxmlExport && (
+        <FcpxmlExportDialog
+          filename={fcpxmlExport.filename}
+          summary={fcpxmlExport.summary}
+          onClose={() => setFcpxmlExport(null)}
         />
       )}
     </div>
@@ -1380,6 +1457,101 @@ function ResolveExportDialog({
           <div className="text-[12px] text-ink-400 leading-snug">
             The script picks a folder, imports clips, and fills each beat-bin.
             Safe to re-run; clips shared by multiple beats get a copy per bin.
+          </div>
+        </div>
+
+        <footer className="px-5 py-3 border-t border-ink-800 flex justify-end">
+          <button
+            onClick={onClose}
+            className="h-9 px-4 rounded-lg bg-accent-400 hover:bg-accent-300 text-ink-950 font-medium text-sm transition"
+          >
+            Got it
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+function FcpxmlExportDialog({
+  filename,
+  summary,
+  onClose,
+}: {
+  filename: string;
+  summary: FcpxmlExportSummary;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-[55] bg-ink-950/75 backdrop-blur-sm flex items-center justify-center p-6 fade-in"
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-[520px] max-w-full rounded-xl bg-ink-900 border border-ink-700 shadow-2xl shadow-ink-950/80 overflow-hidden pop-in"
+      >
+        <header className="px-5 py-4 border-b border-ink-800 flex items-center gap-3">
+          <div className="size-9 rounded-lg bg-accent-400/20 text-accent-300 flex items-center justify-center">
+            <Film className="size-4" />
+          </div>
+          <div className="flex-1">
+            <div className="font-medium text-ink-50">Exported for Final Cut Pro</div>
+            <div
+              className="text-[12px] font-mono text-ink-300 mt-0.5 truncate"
+              title={filename}
+            >
+              {filename}
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="size-8 rounded-md hover:bg-ink-800 text-ink-300 hover:text-ink-50 flex items-center justify-center"
+          >
+            <X className="size-4" />
+          </button>
+        </header>
+
+        <div className="px-5 py-4 space-y-4">
+          <div className="grid grid-cols-3 gap-3 text-center">
+            <Stat label="Beats" value={summary.beats.toString()} />
+            <Stat
+              label="Clips"
+              value={summary.uniqueClips.toString()}
+              hint={
+                summary.totalRefs !== summary.uniqueClips
+                  ? `${summary.totalRefs} refs`
+                  : undefined
+              }
+            />
+            <Stat
+              label="Empty beats"
+              value={summary.emptyBeats.toString()}
+              tone={summary.emptyBeats > 0 ? "muted" : undefined}
+            />
+          </div>
+
+          <ol className="list-decimal pl-5 space-y-1.5 text-ink-200 text-[13px] leading-relaxed">
+            <li>
+              In FCP, <strong>File → Import → XML…</strong> and pick the
+              downloaded <span className="font-mono text-ink-100">.fcpxml</span>
+              . Choose a library to import into.
+            </li>
+            <li>
+              FCP creates one <strong>Event</strong> per beat. Clips appear
+              <em> Missing</em> because the file references aren't linked yet.
+            </li>
+            <li>
+              Right-click any clip → <strong>Relink Files…</strong> → point at
+              your project folder. FCP scans recursively and matches by
+              filename + UID across every event.
+            </li>
+          </ol>
+
+          <div className="text-[12px] text-ink-400 leading-snug">
+            Shared clips appear naturally in every matching event — no
+            duplicate hack. Re-importing the same .fcpxml is safe (stable UIDs;
+            FCP reuses existing assets).
           </div>
         </div>
 
