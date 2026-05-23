@@ -245,7 +245,7 @@ let viewportPersistPending: Board | null = null;
 class ThumbQueue {
   private q: string[] = [];
   private inFlight = 0;
-  private max = 3;
+  private max = 16;
   private totalEnqueued = 0;
   private totalDone = 0;
   private run: (id: string) => Promise<void>;
@@ -473,6 +473,183 @@ export const useStore = create<StoreState>((set, get) => {
         }
       } catch {}
 
+      // Migration v6: clear fps so the new container-parsed fps detector
+      // re-runs over all clips. Earlier fps values came from playback timing
+      // which Chromium gets wrong for some HDR/high-bit-depth clips (we'd
+      // measure half the real rate). Container parsing is exact.
+      const FPS_REDETECT_KEY = "storytime.fpsContainerParse.v1";
+      try {
+        if (localStorage.getItem(FPS_REDETECT_KEY) !== "done") {
+          for (const c of Object.values(clipMap)) {
+            if (c.fps !== undefined) {
+              const updated = { ...c, fps: undefined };
+              delete (updated as { fps?: number }).fps;
+              clipMap[c.id] = updated;
+              await db.putOne("clips", { ...updated, thumb: undefined });
+            }
+          }
+          localStorage.setItem(FPS_REDETECT_KEY, "done");
+        }
+      } catch {}
+
+      // Migration v7: for VFR clips, re-detect fps with the new average-rate
+      // computation (FCP's relink check appears to compare against the file's
+      // *average* frame rate, not the modal one we previously stored).
+      const VFR_AVG_REDETECT_KEY = "storytime.vfrAvgFps.v1";
+      try {
+        if (localStorage.getItem(VFR_AVG_REDETECT_KEY) !== "done") {
+          for (const c of Object.values(clipMap)) {
+            if (c.isVariableFps) {
+              const updated = {
+                ...c,
+                fps: undefined,
+                fpsSampleDelta: undefined,
+                fpsTimescale: undefined,
+                isVariableFps: undefined,
+              };
+              delete (updated as { fps?: number }).fps;
+              delete (updated as { fpsSampleDelta?: number }).fpsSampleDelta;
+              delete (updated as { fpsTimescale?: number }).fpsTimescale;
+              delete (updated as { isVariableFps?: boolean }).isVariableFps;
+              clipMap[c.id] = updated;
+              await db.putOne("clips", { ...updated, thumb: undefined });
+            }
+          }
+          localStorage.setItem(VFR_AVG_REDETECT_KEY, "done");
+        }
+      } catch {}
+
+      // Migration v8: clear fps for all clips so the new multi-track-aware
+      // parser re-runs. Previous parser picked the first `vide` track which
+      // for iPhone Cinematic-mode clips can be a depth/disparity auxiliary
+      // track instead of the main video. Heavy (re-extracts everything) but
+      // necessary — we can't tell from stored data whether the previous fps
+      // came from the right track or not.
+      const PARSER_MULTITRACK_KEY = "storytime.parserMultiTrack.v1";
+      try {
+        if (localStorage.getItem(PARSER_MULTITRACK_KEY) !== "done") {
+          for (const c of Object.values(clipMap)) {
+            if (
+              c.fps !== undefined ||
+              c.fpsSampleDelta !== undefined ||
+              c.fpsTimescale !== undefined
+            ) {
+              const updated = {
+                ...c,
+                fps: undefined,
+                fpsSampleDelta: undefined,
+                fpsTimescale: undefined,
+                isVariableFps: undefined,
+              };
+              delete (updated as { fps?: number }).fps;
+              delete (updated as { fpsSampleDelta?: number }).fpsSampleDelta;
+              delete (updated as { fpsTimescale?: number }).fpsTimescale;
+              delete (updated as { isVariableFps?: boolean }).isVariableFps;
+              clipMap[c.id] = updated;
+              await db.putOne("clips", { ...updated, thumb: undefined });
+            }
+          }
+          localStorage.setItem(PARSER_MULTITRACK_KEY, "done");
+        }
+      } catch {}
+
+      // Migration v9: clear fps once more so the new parser re-runs with
+      // (a) mdat-first MP4 support (Samsung, screen recorders) — previously
+      //     returned null and fell back to playback measurement, and
+      // (b) average-fps computation matching what FCP/AVFoundation reads
+      //     (instead of the modal sample-delta we used before).
+      const PARSER_AVG_KEY = "storytime.parserAvgFps.v1";
+      try {
+        if (localStorage.getItem(PARSER_AVG_KEY) !== "done") {
+          for (const c of Object.values(clipMap)) {
+            if (
+              c.fps !== undefined ||
+              c.fpsSampleDelta !== undefined ||
+              c.fpsTimescale !== undefined
+            ) {
+              const updated = {
+                ...c,
+                fps: undefined,
+                fpsSampleDelta: undefined,
+                fpsTimescale: undefined,
+                isVariableFps: undefined,
+              };
+              delete (updated as { fps?: number }).fps;
+              delete (updated as { fpsSampleDelta?: number }).fpsSampleDelta;
+              delete (updated as { fpsTimescale?: number }).fpsTimescale;
+              delete (updated as { isVariableFps?: boolean }).isVariableFps;
+              clipMap[c.id] = updated;
+              await db.putOne("clips", { ...updated, thumb: undefined });
+            }
+          }
+          localStorage.setItem(PARSER_AVG_KEY, "done");
+        }
+      } catch {}
+
+      // Migration v10: revert "always-avg" — true-CFR clips need their exact
+      // (sampleDelta, timescale) preserved unchanged. v9 over-corrected by
+      // averaging every clip, which broke iPhone CFR relink. v10 clears fps
+      // again so the queue re-runs with avg-only-for-VFR.
+      const PARSER_CFR_PRESERVE_KEY = "storytime.parserCfrPreserve.v1";
+      try {
+        if (localStorage.getItem(PARSER_CFR_PRESERVE_KEY) !== "done") {
+          for (const c of Object.values(clipMap)) {
+            if (
+              c.fps !== undefined ||
+              c.fpsSampleDelta !== undefined ||
+              c.fpsTimescale !== undefined
+            ) {
+              const updated = {
+                ...c,
+                fps: undefined,
+                fpsSampleDelta: undefined,
+                fpsTimescale: undefined,
+                isVariableFps: undefined,
+              };
+              delete (updated as { fps?: number }).fps;
+              delete (updated as { fpsSampleDelta?: number }).fpsSampleDelta;
+              delete (updated as { fpsTimescale?: number }).fpsTimescale;
+              delete (updated as { isVariableFps?: boolean }).isVariableFps;
+              clipMap[c.id] = updated;
+              await db.putOne("clips", { ...updated, thumb: undefined });
+            }
+          }
+          localStorage.setItem(PARSER_CFR_PRESERVE_KEY, "done");
+        }
+      } catch {}
+
+      // Migration v11: reduce CFR rationals by GCD too (was VFR-only). GoPro
+      // 4K at 29.97 stores as (3003, 90000) which is value-equal to the
+      // canonical (1001, 30000) but FCP's relink check rejects non-canonical
+      // rationals. Re-extract everything to emit the reduced form.
+      const PARSER_REDUCE_CFR_KEY = "storytime.parserReduceCfr.v1";
+      try {
+        if (localStorage.getItem(PARSER_REDUCE_CFR_KEY) !== "done") {
+          for (const c of Object.values(clipMap)) {
+            if (
+              c.fps !== undefined ||
+              c.fpsSampleDelta !== undefined ||
+              c.fpsTimescale !== undefined
+            ) {
+              const updated = {
+                ...c,
+                fps: undefined,
+                fpsSampleDelta: undefined,
+                fpsTimescale: undefined,
+                isVariableFps: undefined,
+              };
+              delete (updated as { fps?: number }).fps;
+              delete (updated as { fpsSampleDelta?: number }).fpsSampleDelta;
+              delete (updated as { fpsTimescale?: number }).fpsTimescale;
+              delete (updated as { isVariableFps?: boolean }).isVariableFps;
+              clipMap[c.id] = updated;
+              await db.putOne("clips", { ...updated, thumb: undefined });
+            }
+          }
+          localStorage.setItem(PARSER_REDUCE_CFR_KEY, "done");
+        }
+      } catch {}
+
       let needsPerm = false;
       if (meta?.rootHandle) {
         const ok = await (meta.rootHandle as any).queryPermission({ mode: "read" });
@@ -583,7 +760,14 @@ export const useStore = create<StoreState>((set, get) => {
       for (const f of found) {
         const existing = prev[f.id];
         if (existing) {
-          next[f.id] = { ...existing, ...f, isNew: existing.isNew ?? false };
+          // Rescan re-grants extraction a chance: clear thumbFailed so any
+          // previously unloadable file gets re-tried with the new handle.
+          next[f.id] = {
+            ...existing,
+            ...f,
+            isNew: existing.isNew ?? false,
+            thumbFailed: false,
+          };
         } else {
           next[f.id] = {
             ...f,
@@ -687,22 +871,48 @@ export const useStore = create<StoreState>((set, get) => {
       // them — wrong defaults make FCP refuse to relink).
       if (!c || c.thumbFailed) return;
       if (c.thumb && c.fps !== undefined && c.hasAudio !== undefined) return;
+
+      // If we don't even have project permission yet, don't mark anything;
+      // the queue will retry naturally once permission is granted.
+      const meta = get().meta;
+      if (!meta?.rootHandle) return;
+
       const file = await get().getClipFile(clipId);
-      if (!file) return;
+      if (!file) {
+        // Permission is fine but this specific file couldn't be located
+        // (moved, deleted, broken handle). Mark thumbFailed so we stop
+        // re-queueing it every load. A rescan will clear the flag.
+        const failed: Clip = { ...c, thumbFailed: true };
+        set({ clips: { ...get().clips, [clipId]: failed } });
+        await db.putOne("clips", { ...failed, thumb: undefined });
+        return;
+      }
       const r = await extractThumb(file);
       if (!r) {
         const failed: Clip = { ...c, thumbFailed: true };
         set({ clips: { ...get().clips, [clipId]: failed } });
-        await db.putOne("clips", failed);
+        await db.putOne("clips", { ...failed, thumb: undefined });
         return;
       }
+      // Persist EVERY field after a successful extraction. fps falls back to
+      // 30 if rVFC couldn't measure — better a possibly-wrong default than an
+      // endless re-extraction loop.
       const updated: Clip = {
         ...c,
         thumb: r.dataUrl,
         durationMs: r.durationMs,
         width: r.width,
         height: r.height,
-        ...(r.fps !== undefined ? { fps: r.fps } : {}),
+        fps: r.fps ?? 30,
+        ...(r.fpsSampleDelta !== undefined && r.fpsTimescale !== undefined
+          ? {
+              fpsSampleDelta: r.fpsSampleDelta,
+              fpsTimescale: r.fpsTimescale,
+            }
+          : {}),
+        ...(r.isVariableFps !== undefined
+          ? { isVariableFps: r.isVariableFps }
+          : {}),
         hasAudio: r.hasAudio,
       };
       set({ clips: { ...get().clips, [clipId]: updated } });

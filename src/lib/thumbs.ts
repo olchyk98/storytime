@@ -1,6 +1,8 @@
 // Extract a still frame from a video File and return a data URL.
 // Seeks to a small offset to avoid black first frames.
 
+import { getFpsFromContainer } from "./mp4fps";
+
 const THUMB_W = 320;
 const THUMB_H = 180;
 
@@ -101,6 +103,9 @@ export async function extractThumb(file: File): Promise<{
   width: number;
   height: number;
   fps?: number;
+  fpsSampleDelta?: number;
+  fpsTimescale?: number;
+  isVariableFps?: boolean;
   hasAudio: boolean;
 } | null> {
   const url = URL.createObjectURL(file);
@@ -150,9 +155,27 @@ export async function extractThumb(file: File): Promise<{
     ctx.drawImage(video, 0, 0, cw, ch);
     const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
 
-    // Measure fps with a brief play before tearing down. The same play also
-    // primes the audio decoder so we can read the audio-byte counter after.
-    const fps = await detectFps(video).catch(() => undefined);
+    // Container-parsed fps is exact (mdhd timescale / stts sample delta) and
+    // way faster than playback measurement. Fall back to requestVideoFrameCallback
+    // sampling for files where parsing fails (e.g. non-MP4/MOV containers).
+    let fps: number | undefined;
+    let fpsSampleDelta: number | undefined;
+    let fpsTimescale: number | undefined;
+    let isVariableFps: boolean | undefined;
+    try {
+      const cf = await getFpsFromContainer(file);
+      if (cf && cf.fps >= 5 && cf.fps <= 300) {
+        fps = cf.fps;
+        fpsSampleDelta = cf.sampleDelta;
+        fpsTimescale = cf.timescale;
+        isVariableFps = cf.isVariableFps;
+      }
+    } catch {
+      /* fall through */
+    }
+    if (fps === undefined) {
+      fps = await detectFps(video).catch(() => undefined);
+    }
     const hasAudio = detectHasAudio(video);
 
     return {
@@ -161,6 +184,9 @@ export async function extractThumb(file: File): Promise<{
       width: vw,
       height: vh,
       fps,
+      fpsSampleDelta,
+      fpsTimescale,
+      isVariableFps,
       hasAudio,
     };
   } catch {

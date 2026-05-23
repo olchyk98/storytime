@@ -115,6 +115,16 @@ export interface Clip {
   // Detected frame rate (e.g. 29.97, 30, 59.94, 60). Used by FCPXML export to
   // emit per-fps <format> entries so relink doesn't reject mixed-fps shoots.
   fps?: number;
+  // Exact rational form of the per-frame duration: sampleDelta / timescale
+  // seconds, read from the file's `mdhd`/`stts` atoms. FCP checks bit-exact
+  // equality on relink, so for non-standard rates (e.g. 30.04 fps) we need
+  // the raw integers, not a snapped approximation.
+  fpsSampleDelta?: number;
+  fpsTimescale?: number;
+  // True for variable-frame-rate clips (Snapchat, screen recordings). FCPXML
+  // assets are CFR-only; we skip these from the FCPXML and surface them in
+  // the export warning so the user knows to transcode before importing.
+  isVariableFps?: boolean;
   // True/false from audio-byte-count probe during scan. Used by FCPXML export
   // so audio-less footage (drones, screen recordings) doesn't get hasAudio=1
   // and fail relink.

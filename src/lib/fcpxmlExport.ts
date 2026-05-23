@@ -13,6 +13,12 @@ export interface FcpxmlExportSummary {
   // If the real file is silent (drone footage, screen recordings) FCP rejects
   // the relink.
   missingAudioCount: number;
+  // Variable-frame-rate clips we emitted with a <conform-rate> hint. FCPXML
+  // can't strictly declare a VFR asset; we declare the modal rate and tell
+  // FCP to conform. If FCP still rejects relink, the user needs to transcode
+  // these to CFR (ffmpeg / Handbrake) before importing.
+  vfrCount: number;
+  vfrFilenames: string[];
 }
 
 export interface FcpxmlExportResult {
@@ -29,11 +35,18 @@ function escapeXml(s: string): string {
     .replace(/'/g, "&apos;");
 }
 
-// Snap the detected fps to the nearest "standard" video frame rate. We
-// recognise NTSC fractional rates (23.976, 29.97, 59.94, 119.88) separately
-// from their integer cousins (24, 30, 60, 120) because FCP's relink dialog
-// checks fps strictly — a 29.97 clip declared as 30 fails to relink.
-const FPS_PROFILES = [
+// Per-clip frame-duration profile. When the container parser succeeded we
+// have the file's exact rational form (sampleDelta/timescale) — use that
+// verbatim so FCP's bit-exact relink check passes. Otherwise we snap the
+// detected fps to a standard broadcast rate.
+interface FrameProfile {
+  fps: number;
+  num: number;
+  den: number;
+  name: string;
+}
+
+const STANDARD_PROFILES: FrameProfile[] = [
   { fps: 23.976, num: 1001, den: 24000, name: "FFVideoFormat1080p2398" },
   { fps: 24, num: 100, den: 2400, name: "FFVideoFormat1080p24" },
   { fps: 25, num: 100, den: 2500, name: "FFVideoFormat1080p25" },
@@ -45,14 +58,25 @@ const FPS_PROFILES = [
   { fps: 119.88, num: 1001, den: 120000, name: "FFVideoFormat1080p11988" },
   { fps: 120, num: 100, den: 12000, name: "FFVideoFormat1080p120" },
   { fps: 240, num: 100, den: 24000, name: "FFVideoFormat1080p240" },
-] as const;
-type FpsProfile = (typeof FPS_PROFILES)[number];
+];
 
-function snapFps(fps: number | undefined): FpsProfile {
-  if (!fps || !isFinite(fps)) return FPS_PROFILES[4]; // default 30
-  let best: FpsProfile = FPS_PROFILES[0];
+function profileFor(clip: Clip): FrameProfile {
+  if (clip.fpsSampleDelta && clip.fpsTimescale) {
+    const fps = clip.fpsTimescale / clip.fpsSampleDelta;
+    return {
+      fps,
+      num: clip.fpsSampleDelta,
+      den: clip.fpsTimescale,
+      name: `FFVideoFormatFrame${clip.fpsSampleDelta}_${clip.fpsTimescale}`,
+    };
+  }
+  // No container info — snap detected fps to a standard rate. Used only for
+  // legacy/non-MP4 clips where the parser couldn't extract the rational form.
+  const fps = clip.fps;
+  if (!fps || !isFinite(fps)) return STANDARD_PROFILES[4]; // default 30
+  let best = STANDARD_PROFILES[0];
   let bestDiff = Math.abs(best.fps - fps);
-  for (const p of FPS_PROFILES) {
+  for (const p of STANDARD_PROFILES) {
     const d = Math.abs(p.fps - fps);
     if (d < bestDiff) {
       best = p;
@@ -64,9 +88,15 @@ function snapFps(fps: number | undefined): FpsProfile {
 
 // FCPXML uses rational time. The duration must be a multiple of the
 // frame-duration tick so FCP doesn't reject the asset.
-function fcpDuration(ms: number | undefined, profile: FpsProfile): string {
+//
+// We round DOWN (floor) when converting ms → frames so the declared duration
+// never overshoots the real file. NTSC rates (29.97, 59.94) round to a frame
+// count that, multiplied back by the rational tick, lands fractionally
+// LONGER than the source ms. FCP then rejects relink with "no shared media
+// range" because the asset claims more time than the file contains.
+function fcpDuration(ms: number | undefined, profile: FrameProfile): string {
   const totalMs = Math.max(33, Math.round(ms ?? 60_000));
-  const frames = Math.max(1, Math.round((totalMs * profile.fps) / 1000));
+  const frames = Math.max(1, Math.floor((totalMs * profile.fps) / 1000));
   return `${frames * profile.num}/${profile.den}s`;
 }
 
@@ -106,8 +136,13 @@ export function generateFcpxmlExport(opts: {
   events: BoardEventNode[];
   clips: Record<string, Clip>;
   projectName: string;
+  // Optional absolute filesystem path to the project root. When provided, each
+  // clip's media-rep src becomes a full file:// URL FCP can resolve directly,
+  // letting FCP import via its native AVFoundation pipeline (which handles
+  // VFR correctly) instead of going through the strict relink check.
+  absoluteProjectRoot?: string;
 }): FcpxmlExportResult {
-  const { events, clips } = opts;
+  const { events, clips, absoluteProjectRoot } = opts;
 
   const sortedEvents = [...events].sort(
     (a, b) => (a.order ?? 0) - (b.order ?? 0)
@@ -120,10 +155,15 @@ export function generateFcpxmlExport(opts: {
   });
 
   // Unique clips become <asset> resources, each referenced by potentially
-  // many event <event>s.
+  // many event <event>s. VFR clips ARE emitted; we add a <conform-rate> hint
+  // inside their <asset-clip> elements so FCP knows to interpret them at the
+  // declared CFR rate. (Not guaranteed to satisfy FCP's relink check — VFR is
+  // fundamentally a CFR-only-model edge case — but worth trying before
+  // resorting to transcoding.)
   const clipIdToAssetId = new Map<string, string>();
-  const clipIdToProfile = new Map<string, FpsProfile>();
+  const clipIdToProfile = new Map<string, FrameProfile>();
   const assets: Clip[] = [];
+  const vfrClips: Clip[] = [];
   let nextId = 1;
 
   let totalRefs = 0;
@@ -137,28 +177,32 @@ export function generateFcpxmlExport(opts: {
       totalRefs++;
       if (!clipIdToAssetId.has(c.id)) {
         clipIdToAssetId.set(c.id, `r${nextId++}`);
-        clipIdToProfile.set(c.id, snapFps(c.fps));
+        clipIdToProfile.set(c.id, profileFor(c));
         assets.push(c);
+        if (c.isVariableFps) vfrClips.push(c);
       }
     }
   }
 
   // Collect the distinct fps profiles in use and assign each a <format> id.
-  const profileToFormatId = new Map<FpsProfile, string>();
-  const formatDefs: { id: string; profile: FpsProfile }[] = [];
+  // Profiles with the same (num, den) collapse to a single <format> entry.
+  const profileToFormatId = new Map<string, string>();
+  const formatDefs: { id: string; profile: FrameProfile }[] = [];
+  const profileKey = (p: FrameProfile) => `${p.num}/${p.den}`;
   for (const c of assets) {
     const p = clipIdToProfile.get(c.id)!;
-    if (!profileToFormatId.has(p)) {
+    const key = profileKey(p);
+    if (!profileToFormatId.has(key)) {
       const id = `f${nextId++}`;
-      profileToFormatId.set(p, id);
+      profileToFormatId.set(key, id);
       formatDefs.push({ id, profile: p });
     }
   }
   // Guarantee at least one format exists even if there are zero clips.
   if (formatDefs.length === 0) {
-    const def = snapFps(30);
+    const def = STANDARD_PROFILES[4]; // 30fps fallback
     const id = `f${nextId++}`;
-    profileToFormatId.set(def, id);
+    profileToFormatId.set(profileKey(def), id);
     formatDefs.push({ id, profile: def });
   }
 
@@ -173,14 +217,22 @@ export function generateFcpxmlExport(opts: {
     );
   }
 
+  // Trim trailing slashes from the root path so we can append `/segment` cleanly.
+  const rootPath = absoluteProjectRoot?.replace(/\/+$/, "");
   for (const c of assets) {
     const assetId = clipIdToAssetId.get(c.id)!;
     const profile = clipIdToProfile.get(c.id)!;
-    const formatId = profileToFormatId.get(profile)!;
+    const formatId = profileToFormatId.get(profileKey(profile))!;
     const name = stripExt(c.name);
     const uid = fcpUid(c.name);
     const duration = fcpDuration(c.durationMs, profile);
-    const src = `file:///${escapeXml(c.name)}`;
+    // Build the media-rep src URL. When an absolute project root is provided,
+    // emit a full file:// URL (encoded per path segment) so FCP loads via its
+    // native AVFoundation importer — bypassing the strict relink check.
+    // Without it, fall back to the legacy filename-only form (forces relink).
+    const src = rootPath
+      ? `file://${encodeURI(rootPath)}/${c.path.map((s) => encodeURIComponent(s)).join("/")}`
+      : `file:///${escapeXml(c.name)}`;
     // Default to hasAudio=1 only when unknown. Detected silent clips (drones,
     // screen recordings) must declare hasAudio=0 so FCP doesn't reject relink.
     const audioAttrs =
@@ -200,14 +252,26 @@ export function generateFcpxmlExport(opts: {
   lines.push(`    </resources>`);
 
   lines.push(`    <library>`);
+  // Zero-pad the index width to the event count so FCP's alphabetical sort
+  // in the library sidebar lines up with storytime's authored order.
+  const prefixWidth = String(eventBuckets.length).length;
+  let eventIdx = 0;
   for (const { event, clips: eClips } of eventBuckets) {
-    const eventName = (event.label ?? "Untitled event").trim() || "Untitled event";
+    eventIdx++;
+    const raw = (event.label ?? "Untitled event").trim() || "Untitled event";
+    const prefix = String(eventIdx).padStart(prefixWidth, "0");
+    const eventName = `${prefix} — ${raw}`;
     lines.push(`        <event name="${escapeXml(eventName)}">`);
     for (const c of eClips) {
       const assetId = clipIdToAssetId.get(c.id)!;
       const profile = clipIdToProfile.get(c.id)!;
       const name = stripExt(c.name);
       const duration = fcpDuration(c.durationMs, profile);
+      // We don't emit <conform-rate srcFrameRate="..."> for VFR clips —
+      // srcFrameRate is enumerated by FCP (23.98/24/25/29.97/30/…) and our
+      // avg-fps values fail DTD validation. The asset's <format> already
+      // declares the avg rational; FCP's relink check is on the format, not
+      // on conform-rate.
       lines.push(
         `            <asset-clip ref="${assetId}" name="${escapeXml(
           name
@@ -237,6 +301,8 @@ export function generateFcpxmlExport(opts: {
       emptyEvents,
       missingFpsCount,
       missingAudioCount,
+      vfrCount: vfrClips.length,
+      vfrFilenames: vfrClips.map((c) => c.name),
     },
   };
 }

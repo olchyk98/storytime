@@ -585,6 +585,24 @@ export function Board() {
                 <button
                   onClick={() => {
                     const s = useStore.getState();
+                    // Ask for absolute project-folder path so FCP can resolve
+                    // each clip via its native AVFoundation importer (handles
+                    // VFR), bypassing the strict relink check entirely.
+                    // Tip: in Finder, ⌘⌥C on the folder copies the absolute
+                    // path; paste into the prompt.
+                    const lastPath =
+                      localStorage.getItem("storytime.fcp.absRoot") ?? "";
+                    const absRootInput = window.prompt(
+                      "Absolute path to your project folder, so FCP can load each clip directly (avoids the relink frame-rate check).\n\nIn Finder: select the project folder → ⌘⌥C copies its path. Paste here.\n\nLeave blank to use the legacy filename-only paths (requires relink).",
+                      lastPath
+                    );
+                    if (absRootInput !== null) {
+                      localStorage.setItem(
+                        "storytime.fcp.absRoot",
+                        absRootInput
+                      );
+                    }
+                    const absRoot = (absRootInput ?? "").trim() || undefined;
                     const allEvents = Object.values(s.boardNodes).filter(
                       (n): n is BoardEventNode => n.kind === "event"
                     );
@@ -592,6 +610,7 @@ export function Board() {
                       events: allEvents,
                       clips: s.clips,
                       projectName: s.meta?.name ?? "storytime",
+                      absoluteProjectRoot: absRoot,
                     });
                     const filename = downloadFcpxml(
                       xml,
@@ -1548,8 +1567,10 @@ function FcpxmlExportDialog({
             </li>
           </ol>
 
-          {(summary.missingFpsCount > 0 || summary.missingAudioCount > 0) && (
-            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-200 leading-snug space-y-1">
+          {(summary.missingFpsCount > 0 ||
+            summary.missingAudioCount > 0 ||
+            summary.vfrCount > 0) && (
+            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-200 leading-snug space-y-1.5">
               {summary.missingFpsCount > 0 && (
                 <div>
                   <strong>{summary.missingFpsCount}</strong> /{" "}
@@ -1566,10 +1587,37 @@ function FcpxmlExportDialog({
                   real file is silent (drones, screen recordings).
                 </div>
               )}
-              <div className="text-amber-300/80">
-                Wait for the background extraction to finish (Topbar progress
-                bar), then re-export.
-              </div>
+              {summary.vfrCount > 0 && (
+                <div>
+                  <strong>{summary.vfrCount}</strong> variable-frame-rate clips
+                  (Snapchat / screen recordings) were emitted with a{" "}
+                  <code className="text-amber-100">&lt;conform-rate&gt;</code>{" "}
+                  hint at their modal fps. FCP <em>might</em> still reject
+                  these on relink — VFR is a CFR-only-model edge case. If it
+                  does, the fix is to transcode (e.g.{" "}
+                  <code className="text-amber-100">
+                    ffmpeg -i in.mp4 -fps_mode cfr -r 30 out.mp4
+                  </code>
+                  ).
+                  <details className="mt-1">
+                    <summary className="cursor-pointer underline">
+                      Show file list
+                    </summary>
+                    <div className="mt-1 max-h-32 overflow-y-auto font-mono text-[11px] text-amber-100/80">
+                      {summary.vfrFilenames.map((n) => (
+                        <div key={n}>{n}</div>
+                      ))}
+                    </div>
+                  </details>
+                </div>
+              )}
+              {(summary.missingFpsCount > 0 ||
+                summary.missingAudioCount > 0) && (
+                <div className="text-amber-300/80">
+                  Wait for the background extraction to finish (Topbar progress
+                  bar), then re-export.
+                </div>
+              )}
             </div>
           )}
 
