@@ -13,41 +13,41 @@ import {
   X,
 } from "lucide-react";
 import { useStore } from "../../state/store";
-import { clipsMatchingGroup, sortClips } from "../../lib/beatFilter";
+import { clipsMatchingEvent, sortClips } from "../../lib/eventFilter";
 import { SearchableMultiSelect } from "../SearchableMultiSelect";
 import { GroupSortMenu } from "./GroupSortMenu";
 import { fmtBytes, fmtDuration } from "../../lib/format";
 import { useHoverPreview } from "../../lib/useHoverPreview";
 import { useLocalStorage } from "../../lib/useLocalStorage";
-import type { BoardGroupSort, Clip } from "../../types";
+import type { BoardEventSort, Clip } from "../../types";
 
 interface Props {
   // null = creating new, string = editing existing
-  beatId: string | null;
-  // If creating new, where on the board the beat should be placed.
+  eventId: string | null;
+  // If creating new, where on the board the event should be placed.
   initialPosition?: { x: number; y: number };
   onClose: () => void;
 }
 
 const DRAG_THRESHOLD_PX = 6;
 
-export function BeatEditor({ beatId, initialPosition, onClose }: Props) {
+export function EventEditor({ eventId, initialPosition, onClose }: Props) {
   const {
     boardNodes,
     levels,
     levelValues,
     clips,
     currentBoardId,
-    createBeat,
+    createEvent,
     updateBoardNode,
     deleteBoardNodes,
     addValue,
     pushBoardHistory,
   } = useStore();
 
-  const existing = beatId ? boardNodes[beatId] : null;
+  const existing = eventId ? boardNodes[eventId] : null;
   const isExisting =
-    existing != null && existing.kind === "group" ? existing : null;
+    existing != null && existing.kind === "event" ? existing : null;
 
   const [name, setName] = useState(isExisting?.label ?? "");
   const [tags, setTags] = useState<Record<string, string[]>>(
@@ -57,11 +57,11 @@ export function BeatEditor({ beatId, initialPosition, onClose }: Props) {
     new Set(isExisting?.excludedClipIds ?? [])
   );
   const [q, setQ] = useState("");
-  const [sort, setSort] = useState<BoardGroupSort>(
+  const [sort, setSort] = useState<BoardEventSort>(
     isExisting?.sort ?? "name-asc"
   );
   const [isFullscreen, setIsFullscreen] = useLocalStorage(
-    "storytime.beatEditor.fullscreen",
+    "storytime.eventEditor.fullscreen",
     false
   );
 
@@ -72,7 +72,7 @@ export function BeatEditor({ beatId, initialPosition, onClose }: Props) {
     setQ("");
     setSort(isExisting?.sort ?? "name-asc");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [beatId]);
+  }, [eventId]);
 
   const sortedLevels = useMemo(
     () => Object.values(levels).sort((a, b) => a.order - b.order),
@@ -80,7 +80,7 @@ export function BeatEditor({ beatId, initialPosition, onClose }: Props) {
   );
 
   const matching = useMemo(() => {
-    let arr = clipsMatchingGroup(clips, tags);
+    let arr = clipsMatchingEvent(clips, tags);
     if (q.trim()) {
       const needle = q.toLowerCase();
       arr = arr.filter((c) => c.name.toLowerCase().includes(needle));
@@ -110,7 +110,7 @@ export function BeatEditor({ beatId, initialPosition, onClose }: Props) {
   }, [onClose]);
 
   function save() {
-    const cleanName = name.trim() || "Untitled beat";
+    const cleanName = name.trim() || "Untitled event";
     const cleanTags = Object.fromEntries(
       Object.entries(tags).filter(([, v]) => Array.isArray(v) && v.length > 0)
     );
@@ -125,7 +125,7 @@ export function BeatEditor({ beatId, initialPosition, onClose }: Props) {
       });
     } else {
       if (!currentBoardId) return;
-      const b = createBeat(currentBoardId, {
+      const b = createEvent(currentBoardId, {
         label: cleanName,
         tags: cleanTags,
         excludedClipIds: cleanExcluded,
@@ -139,7 +139,7 @@ export function BeatEditor({ beatId, initialPosition, onClose }: Props) {
 
   function del() {
     if (!isExisting) return;
-    if (!confirm(`Delete beat "${isExisting.label}"?`)) return;
+    if (!confirm(`Delete event "${isExisting.label}"?`)) return;
     deleteBoardNodes([isExisting.id]);
     onClose();
   }
@@ -267,10 +267,10 @@ export function BeatEditor({ beatId, initialPosition, onClose }: Props) {
         <header className="px-5 py-4 border-b border-ink-800 flex items-center gap-3">
           <div className="flex-1">
             <div className="text-xs uppercase tracking-wider text-ink-400">
-              {isExisting ? "Edit beat" : "New beat"}
+              {isExisting ? "Edit event" : "New event"}
             </div>
             <div className="text-sm text-ink-300 leading-snug">
-              A beat shows every clip matching the tag filter, minus the ones
+              A event shows every clip matching the tag filter, minus the ones
               you exclude.
             </div>
           </div>
@@ -437,7 +437,7 @@ export function BeatEditor({ beatId, initialPosition, onClose }: Props) {
                   )}
                 >
                   {matching.map((c) => (
-                    <BeatTile
+                    <EventTile
                       key={c.id}
                       clip={c}
                       excluded={excluded.has(c.id)}
@@ -475,7 +475,7 @@ export function BeatEditor({ beatId, initialPosition, onClose }: Props) {
             className="h-9 px-4 rounded-lg bg-accent-400 hover:bg-accent-300 disabled:opacity-40 disabled:cursor-not-allowed text-ink-950 font-medium text-sm inline-flex items-center gap-1.5 transition"
           >
             <Check className="size-3.5" />
-            {isExisting ? "Save" : "Create beat"}
+            {isExisting ? "Save" : "Create event"}
           </button>
         </footer>
       </div>
@@ -483,7 +483,7 @@ export function BeatEditor({ beatId, initialPosition, onClose }: Props) {
   );
 }
 
-function BeatTile({
+function EventTile({
   clip,
   excluded,
   onPointerDown,

@@ -55,7 +55,10 @@ export const ClipCard = memo(function ClipCard({
   }, [clip.tags, levels, levelValues]);
 
   useEffect(() => {
-    if (clip.thumb || clip.thumbFailed) return;
+    if (clip.thumbFailed) return;
+    // Enqueue when EITHER thumb or fps is missing, so older clips backfill
+    // their fps for FCPXML export.
+    if (clip.thumb && clip.fps !== undefined) return;
     const el = ref.current;
     if (!el) return;
     const io = new IntersectionObserver(
@@ -71,7 +74,7 @@ export const ClipCard = memo(function ClipCard({
     );
     io.observe(el);
     return () => io.disconnect();
-  }, [clip.id, clip.thumb, clip.thumbFailed, enqueueThumbs]);
+  }, [clip.id, clip.thumb, clip.fps, clip.thumbFailed, enqueueThumbs]);
 
   function teardownHover() {
     if (hoverTimer.current) {

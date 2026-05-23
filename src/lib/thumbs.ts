@@ -4,11 +4,70 @@
 const THUMB_W = 320;
 const THUMB_H = 180;
 
+// Sample N consecutive frames during a brief play to estimate fps. Uses
+// requestVideoFrameCallback (Chromium/Safari) which gives precise mediaTime
+// stamps. Returns undefined if rVFC isn't available or sampling failed.
+async function detectFps(video: HTMLVideoElement): Promise<number | undefined> {
+  type FrameMeta = { mediaTime: number };
+  type Cb = (now: number, meta: FrameMeta) => void;
+  const v = video as HTMLVideoElement & {
+    requestVideoFrameCallback?: (cb: Cb) => number;
+  };
+  if (typeof v.requestVideoFrameCallback !== "function") return undefined;
+
+  const TARGET_SAMPLES = 6;
+  const TIMEOUT_MS = 600;
+  const times: number[] = [];
+
+  return new Promise<number | undefined>((resolve) => {
+    let resolved = false;
+    const finish = () => {
+      if (resolved) return;
+      resolved = true;
+      try {
+        video.pause();
+      } catch {
+        /* ignore */
+      }
+      if (times.length < 2) return resolve(undefined);
+      const intervals: number[] = [];
+      for (let i = 1; i < times.length; i++) {
+        const d = times[i] - times[i - 1];
+        if (d > 0.001 && d < 1) intervals.push(d);
+      }
+      if (intervals.length === 0) return resolve(undefined);
+      intervals.sort((a, b) => a - b);
+      const median = intervals[Math.floor(intervals.length / 2)];
+      const fps = 1 / median;
+      // Sanity-clamp: 5 fps (low) to 300 fps (slow-mo upper)
+      if (fps < 5 || fps > 300) return resolve(undefined);
+      resolve(fps);
+    };
+
+    const timer = setTimeout(finish, TIMEOUT_MS);
+    const cb: Cb = (_now, meta) => {
+      times.push(meta.mediaTime);
+      if (times.length >= TARGET_SAMPLES) {
+        clearTimeout(timer);
+        finish();
+      } else {
+        v.requestVideoFrameCallback!(cb);
+      }
+    };
+    v.requestVideoFrameCallback!(cb);
+    video.play().catch(() => {
+      clearTimeout(timer);
+      finish();
+    });
+  });
+}
+
 export async function extractThumb(file: File): Promise<{
   dataUrl: string;
   durationMs: number;
   width: number;
   height: number;
+  fps?: number;
 } | null> {
   const url = URL.createObjectURL(file);
   try {
@@ -57,11 +116,15 @@ export async function extractThumb(file: File): Promise<{
     ctx.drawImage(video, 0, 0, cw, ch);
     const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
 
+    // Measure fps with a brief play before tearing down.
+    const fps = await detectFps(video).catch(() => undefined);
+
     return {
       dataUrl,
       durationMs: Math.round(dur * 1000),
       width: vw,
       height: vh,
+      fps,
     };
   } catch {
     return null;

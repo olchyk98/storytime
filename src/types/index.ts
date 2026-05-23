@@ -29,22 +29,22 @@ export interface BoardNodeBase {
   color?: string;
 }
 
-export type BoardGroupSort = "name-asc" | "name-desc" | "date-desc" | "date-asc";
+export type BoardEventSort = "name-asc" | "name-desc" | "date-desc" | "date-asc";
 
-export interface BoardGroupNode extends BoardNodeBase {
-  kind: "group";
-  // Beats are saved filters. For each level present in `tags`, the clip's
+export interface BoardEventNode extends BoardNodeBase {
+  kind: "event";
+  // Events are saved filters. For each level present in `tags`, the clip's
   // value at that level must be in the listed values (OR within level). The
-  // beat matches a clip only if every level present here passes (AND across
+  // event matches a clip only if every level present here passes (AND across
   // levels). Empty/absent `tags` = no filter at all = every clip matches.
   tags?: Record<LevelId, LevelValueId[]>;
-  sort?: BoardGroupSort;
+  sort?: BoardEventSort;
   // Sequence-within-rank tiebreaker. Higher = appears later in its column.
   order?: number;
-  // Clip ids explicitly excluded from this beat even if they match the filter.
+  // Clip ids explicitly excluded from this event even if they match the filter.
   excludedClipIds?: ClipId[];
-  // Outgoing edges in the beat graph. A beat with multiple ids fans out
-  // (branches); multiple beats can point at the same target (merge).
+  // Outgoing edges in the event graph. A event with multiple ids fans out
+  // (branches); multiple events can point at the same target (merge).
   nextIds?: BoardNodeId[];
 }
 
@@ -59,7 +59,7 @@ export interface BoardTextNode extends BoardNodeBase {
 }
 
 // Unreal Engine "comment" / annotation: bordered region with a header label.
-// Used to visually group beats and label a section of the story.
+// Used to visually group events and label a section of the story.
 export interface BoardAnnotationNode extends BoardNodeBase {
   kind: "annotation";
   label: string;
@@ -79,7 +79,7 @@ export interface BoardArrowNode extends BoardNodeBase {
 }
 
 export type BoardNode =
-  | BoardGroupNode
+  | BoardEventNode
   | BoardRectNode
   | BoardTextNode
   | BoardArrowNode
@@ -112,6 +112,9 @@ export interface Clip {
   durationMs?: number;
   width?: number;
   height?: number;
+  // Detected frame rate (e.g. 29.97, 30, 59.94, 60). Used by FCPXML export to
+  // emit per-fps <format> entries so relink doesn't reject mixed-fps shoots.
+  fps?: number;
   thumb?: string;   // data URL
   thumbFailed?: boolean;
   // user-state

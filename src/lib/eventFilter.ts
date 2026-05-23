@@ -1,6 +1,6 @@
-import type { BoardGroupSort, Clip } from "../types";
+import type { BoardEventSort, Clip } from "../types";
 
-export function clipsMatchingGroup(
+export function clipsMatchingEvent(
   allClips: Record<string, Clip>,
   tags: Record<string, string[]> | undefined
 ) {
@@ -20,7 +20,7 @@ export function clipsMatchingGroup(
   });
 }
 
-export function sortClips(clips: Clip[], sort: BoardGroupSort | undefined) {
+export function sortClips(clips: Clip[], sort: BoardEventSort | undefined) {
   const arr = [...clips];
   switch (sort ?? "name-asc") {
     case "name-asc":

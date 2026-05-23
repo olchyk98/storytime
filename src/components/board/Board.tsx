@@ -17,9 +17,9 @@ import {
 import { useStore } from "../../state/store";
 import { downloadBackup } from "../../lib/downloadBackup";
 import { useLocalStorage } from "../../lib/useLocalStorage";
-import type { BoardAnnotationNode, BoardGroupNode } from "../../types";
-import { BeatEditor } from "./BeatEditor";
-import { clipsMatchingGroup, sortClips } from "../../lib/beatFilter";
+import type { BoardAnnotationNode, BoardEventNode } from "../../types";
+import { EventEditor } from "./EventEditor";
+import { clipsMatchingEvent, sortClips } from "../../lib/eventFilter";
 import {
   downloadResolveScript,
   generateResolveScript,
@@ -31,18 +31,18 @@ import {
   type FcpxmlExportSummary,
 } from "../../lib/fcpxmlExport";
 import {
-  BEAT_HEIGHT,
-  beatWidthFor,
+  EVENT_HEIGHT,
+  eventWidthFor,
   snapToGrid,
-} from "../../lib/beatLayout";
-import { BeatsToolbar } from "./BeatsToolbar";
+} from "../../lib/eventLayout";
+import { EventsToolbar } from "./EventsToolbar";
 import { AnnotationCard } from "./AnnotationCard";
 
 const MIN_ZOOM = 0.3;
 const MAX_ZOOM = 2.5;
 
-interface BeatLayout {
-  beat: BoardGroupNode;
+interface EventLayout {
+  event: BoardEventNode;
   x: number;
   y: number;
   width: number;
@@ -57,7 +57,7 @@ interface PendingConnection {
 }
 
 function hitTestLayout(
-  layout: BeatLayout[],
+  layout: EventLayout[],
   worldX: number,
   worldY: number
 ): string | null {
@@ -66,9 +66,9 @@ function hitTestLayout(
       worldX >= l.x &&
       worldX <= l.x + l.width &&
       worldY >= l.y &&
-      worldY <= l.y + BEAT_HEIGHT
+      worldY <= l.y + EVENT_HEIGHT
     ) {
-      return l.beat.id;
+      return l.event.id;
     }
   }
   return null;
@@ -110,8 +110,8 @@ export function Board() {
   const board = currentBoardId ? boards[currentBoardId] : null;
   const surfaceRef = useRef<HTMLDivElement>(null);
   const [spaceHeld, setSpaceHeld] = useState(false);
-  const [editingBeatId, setEditingBeatId] = useState<string | null>(null);
-  const [creatingBeat, setCreatingBeat] = useState<
+  const [editingEventId, setEditingEventId] = useState<string | null>(null);
+  const [creatingEvent, setCreatingEvent] = useState<
     null | { x: number; y: number }
   >(null);
   const [pendingConn, setPendingConn] = useState<PendingConnection | null>(null);
@@ -148,10 +148,10 @@ export function Board() {
     if (!board) return;
     const rect = surfaceRef.current?.getBoundingClientRect();
     if (!rect) return;
-    // Bounding box of beats + annotations
+    // Bounding box of events + annotations
     const all: { x: number; y: number; w: number; h: number }[] = [];
     for (const l of layout)
-      all.push({ x: l.x, y: l.y, w: l.width, h: BEAT_HEIGHT });
+      all.push({ x: l.x, y: l.y, w: l.width, h: EVENT_HEIGHT });
     for (const a of annotations)
       all.push({ x: a.x, y: a.y, w: a.w, h: a.h });
     if (all.length === 0) {
@@ -173,14 +173,14 @@ export function Board() {
     setBoardViewport(board.id, panX, panY, zoom);
   }
 
-  function startCreatingBeat() {
+  function startCreatingEvent() {
     if (!board) {
-      setCreatingBeat({ x: 0, y: 0 });
+      setCreatingEvent({ x: 0, y: 0 });
       return;
     }
     const rect = surfaceRef.current?.getBoundingClientRect();
     if (!rect) {
-      setCreatingBeat({ x: 0, y: 0 });
+      setCreatingEvent({ x: 0, y: 0 });
       return;
     }
     // Center of the visible viewport in world coords
@@ -188,17 +188,17 @@ export function Board() {
     const cy = rect.height / 2;
     const worldX = (cx - board.panX) / board.zoom;
     const worldY = (cy - board.panY) / board.zoom;
-    setCreatingBeat({
+    setCreatingEvent({
       x: snapToGrid(worldX - 140),
-      y: snapToGrid(worldY - BEAT_HEIGHT / 2),
+      y: snapToGrid(worldY - EVENT_HEIGHT / 2),
     });
   }
 
-  const beats = useMemo(() => {
-    if (!board) return [] as BoardGroupNode[];
+  const events = useMemo(() => {
+    if (!board) return [] as BoardEventNode[];
     return Object.values(boardNodes).filter(
-      (n): n is BoardGroupNode =>
-        n.boardId === board.id && n.kind === "group"
+      (n): n is BoardEventNode =>
+        n.boardId === board.id && n.kind === "event"
     );
   }, [boardNodes, board]);
 
@@ -216,18 +216,18 @@ export function Board() {
   >(null);
 
   const clips = useStore((s) => s.clips);
-  const layout: BeatLayout[] = useMemo(
-    () => buildLayout(beats, levels, levelValues, clips),
-    [beats, levels, levelValues, clips]
+  const layout: EventLayout[] = useMemo(
+    () => buildLayout(events, levels, levelValues, clips),
+    [events, levels, levelValues, clips]
   );
 
   const layoutById = useMemo(() => {
-    const m = new Map<string, BeatLayout>();
-    for (const l of layout) m.set(l.beat.id, l);
+    const m = new Map<string, EventLayout>();
+    for (const l of layout) m.set(l.event.id, l);
     return m;
   }, [layout]);
 
-  // Viewport culling: only render beats / annotations that intersect the
+  // Viewport culling: only render events / annotations that intersect the
   // visible area (with margin so small pans don't cause pop-in).
   const visibleLayout = useMemo(() => {
     if (!board || viewportSize.w === 0) return layout;
@@ -240,7 +240,7 @@ export function Board() {
       (l) =>
         l.x + l.width >= left &&
         l.x <= right &&
-        l.y + BEAT_HEIGHT >= top &&
+        l.y + EVENT_HEIGHT >= top &&
         l.y <= bottom
     );
   }, [
@@ -300,7 +300,7 @@ export function Board() {
         setSpaceHeld(true);
       } else if (e.key === "n" || e.key === "N") {
         e.preventDefault();
-        startCreatingBeat();
+        startCreatingEvent();
       } else if (e.key === "f" || e.key === "F") {
         e.preventDefault();
         fitContent();
@@ -312,7 +312,7 @@ export function Board() {
         (e.key === "Backspace" || e.key === "Delete") &&
         boardSelectedIds.size > 0
       ) {
-        // Allow deleting annotation/other selected non-beat nodes via keyboard.
+        // Allow deleting annotation/other selected non-event nodes via keyboard.
         e.preventDefault();
         deleteBoardNodes([...boardSelectedIds]);
       } else if (e.key === "Escape") {
@@ -448,7 +448,7 @@ export function Board() {
 
 
   // Pack closure-captured state into refs so the connect handler stays
-  // identity-stable for React.memo on BeatCard.
+  // identity-stable for React.memo on EventCard.
   const boardRef = useRef(board);
   boardRef.current = board;
   const layoutRef = useRef(layout);
@@ -456,7 +456,7 @@ export function Board() {
 
   const onConnectStart = useCallback(function onConnectStart(
     e: React.PointerEvent,
-    sourceBeatId: string
+    sourceEventId: string
   ) {
     const board = boardRef.current;
     if (!board) return;
@@ -472,7 +472,7 @@ export function Board() {
       board.zoom
     );
     setPendingConn({
-      sourceId: sourceBeatId,
+      sourceId: sourceEventId,
       worldX: initial.x,
       worldY: initial.y,
       hoverTargetId: null,
@@ -497,7 +497,7 @@ export function Board() {
               worldX: pt.x,
               worldY: pt.y,
               hoverTargetId:
-                hover && hover !== sourceBeatId ? hover : null,
+                hover && hover !== sourceEventId ? hover : null,
             }
           : null
       );
@@ -516,8 +516,8 @@ export function Board() {
         b.zoom
       );
       const target = hitTestLayout(layoutRef.current, pt.x, pt.y);
-      if (target && target !== sourceBeatId) {
-        useStore.getState().connectBeats(sourceBeatId, target);
+      if (target && target !== sourceEventId) {
+        useStore.getState().connectEvents(sourceEventId, target);
       }
       setPendingConn(null);
     };
@@ -528,7 +528,7 @@ export function Board() {
   if (!board) {
     return (
       <div className="flex-1 flex items-center justify-center text-ink-300 text-sm">
-        Setting up beats…
+        Setting up events…
       </div>
     );
   }
@@ -541,13 +541,13 @@ export function Board() {
 
   return (
     <div className="flex-1 relative min-w-0 min-h-0 overflow-hidden bg-ink-950">
-      <BeatsToolbar />
+      <EventsToolbar />
 
       <div className="absolute top-3 right-3 z-30 flex items-center gap-2">
         <button
           onClick={fitContent}
           className="h-10 px-3 rounded-lg border border-ink-700 hover:border-ink-600 bg-ink-900/80 backdrop-blur text-ink-200 hover:text-ink-50 text-sm inline-flex items-center gap-2 transition"
-          title="Fit all beats into view (F)"
+          title="Fit all events into view (F)"
         >
           <Maximize className="size-4" />
           Fit
@@ -567,7 +567,7 @@ export function Board() {
           <button
             onClick={() => setEditorMenuOpen((v) => !v)}
             className="h-10 px-3 rounded-lg border border-ink-700 hover:border-ink-600 bg-ink-900/80 backdrop-blur text-ink-200 hover:text-ink-50 text-sm inline-flex items-center gap-2 transition"
-            title="Export beats to your NLE"
+            title="Export events to your NLE"
           >
             <FolderOutput className="size-4" />
             To Editor
@@ -585,11 +585,11 @@ export function Board() {
                 <button
                   onClick={() => {
                     const s = useStore.getState();
-                    const allBeats = Object.values(s.boardNodes).filter(
-                      (n): n is BoardGroupNode => n.kind === "group"
+                    const allEvents = Object.values(s.boardNodes).filter(
+                      (n): n is BoardEventNode => n.kind === "event"
                     );
                     const { xml, summary } = generateFcpxmlExport({
-                      beats: allBeats,
+                      events: allEvents,
                       clips: s.clips,
                       projectName: s.meta?.name ?? "storytime",
                     });
@@ -606,18 +606,18 @@ export function Board() {
                   <div className="min-w-0">
                     <div className="text-sm text-ink-50">Final Cut Pro</div>
                     <div className="text-[11px] text-ink-400">
-                      .fcpxml · one event per beat
+                      .fcpxml · one event per event
                     </div>
                   </div>
                 </button>
                 <button
                   onClick={() => {
                     const s = useStore.getState();
-                    const allBeats = Object.values(s.boardNodes).filter(
-                      (n): n is BoardGroupNode => n.kind === "group"
+                    const allEvents = Object.values(s.boardNodes).filter(
+                      (n): n is BoardEventNode => n.kind === "event"
                     );
                     const { script, summary } = generateResolveScript({
-                      beats: allBeats,
+                      events: allEvents,
                       clips: s.clips,
                       projectName: s.meta?.name ?? "storytime",
                     });
@@ -634,7 +634,7 @@ export function Board() {
                   <div className="min-w-0">
                     <div className="text-sm text-ink-50">DaVinci Resolve</div>
                     <div className="text-[11px] text-ink-400">
-                      .py · one bin per beat
+                      .py · one bin per event
                     </div>
                   </div>
                 </button>
@@ -643,12 +643,12 @@ export function Board() {
           )}
         </div>
         <button
-          onClick={startCreatingBeat}
+          onClick={startCreatingEvent}
           className="h-10 px-4 rounded-lg bg-accent-400 hover:bg-accent-300 text-ink-950 font-medium text-sm inline-flex items-center gap-2 shadow-lg shadow-accent-400/20 transition"
-          title="Add beat (N)"
+          title="Add event (N)"
         >
           <Plus className="size-4" />
-          Add beat
+          Add event
         </button>
       </div>
 
@@ -679,7 +679,7 @@ export function Board() {
             willChange: "transform",
           }}
         >
-          {/* Annotations render BEHIND beats and arrows */}
+          {/* Annotations render BEHIND events and arrows */}
           {visibleAnnotations.map((a) => (
             <AnnotationCard
               key={a.id}
@@ -706,46 +706,46 @@ export function Board() {
             selectedEdge={selectedEdge}
             onSelectEdge={setSelectedEdge}
             onDisconnect={(from, to) => {
-              useStore.getState().disconnectBeats(from, to);
+              useStore.getState().disconnectEvents(from, to);
               setSelectedEdge(null);
             }}
             pendingConn={pendingConn}
           />
 
           {visibleLayout.map((l) => (
-            <BeatCard
-              key={l.beat.id}
-              beat={l.beat}
+            <EventCard
+              key={l.event.id}
+              event={l.event}
               x={l.x}
               y={l.y}
               width={l.width}
               index={l.index}
-              isConnectHoverTarget={pendingConn?.hoverTargetId === l.beat.id}
-              onEdit={setEditingBeatId}
+              isConnectHoverTarget={pendingConn?.hoverTargetId === l.event.id}
+              onEdit={setEditingEventId}
               onConnectStart={onConnectStart}
             />
           ))}
         </div>
 
-        {beats.length === 0 && (
+        {events.length === 0 && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <div className="text-center max-w-md pointer-events-auto">
               <div className="size-14 rounded-2xl bg-gradient-to-br from-accent-500 to-rose-500 flex items-center justify-center mx-auto mb-4">
                 <Workflow className="size-7 text-ink-950" strokeWidth={2.4} />
               </div>
               <h2 className="text-xl font-medium text-ink-50 mb-2 tracking-tight">
-                Tell your story in beats
+                Tell your story in events
               </h2>
               <p className="text-sm text-ink-300 leading-relaxed max-w-sm mx-auto">
-                A beat is a moment — define it by tags + exceptions. Clone to
-                branch, drag from a beat's right-edge dot to connect to another
-                beat.
+                A event is a moment — define it by tags + exceptions. Clone to
+                branch, drag from a event's right-edge dot to connect to another
+                event.
               </p>
               <button
-                onClick={startCreatingBeat}
+                onClick={startCreatingEvent}
                 className="mt-5 h-10 px-5 rounded-lg bg-accent-400 hover:bg-accent-300 text-ink-950 font-medium text-sm inline-flex items-center gap-2"
               >
-                <Plus className="size-4" /> Add your first beat
+                <Plus className="size-4" /> Add your first event
               </button>
               <div className="mt-3 text-[11px] text-ink-500">
                 Or press <kbd className="px-1 rounded bg-ink-800 text-ink-100">N</kbd>
@@ -759,13 +759,13 @@ export function Board() {
         </div>
       </div>
 
-      {(creatingBeat || editingBeatId) && (
-        <BeatEditor
-          beatId={editingBeatId}
-          initialPosition={creatingBeat ?? undefined}
+      {(creatingEvent || editingEventId) && (
+        <EventEditor
+          eventId={editingEventId}
+          initialPosition={creatingEvent ?? undefined}
           onClose={() => {
-            setCreatingBeat(null);
-            setEditingBeatId(null);
+            setCreatingEvent(null);
+            setEditingEventId(null);
           }}
         />
       )}
@@ -790,23 +790,23 @@ export function Board() {
 }
 
 function buildLayout(
-  beats: BoardGroupNode[],
+  events: BoardEventNode[],
   levels: Record<string, import("../../types").Level>,
   levelValues: Record<string, import("../../types").LevelValue>,
   clips: Record<string, import("../../types").Clip>
-): BeatLayout[] {
-  // Stable per-beat index based on `order` so sequence numbers don't change
+): EventLayout[] {
+  // Stable per-event index based on `order` so sequence numbers don't change
   // unless the order itself changes.
-  const sortedForIndex = [...beats].sort(
+  const sortedForIndex = [...events].sort(
     (a, b) => (a.order ?? 0) - (b.order ?? 0)
   );
   const indexById = new Map<string, number>();
   sortedForIndex.forEach((b, i) => indexById.set(b.id, i + 1));
-  return beats.map((b) => {
-    const matching = clipsMatchingGroup(clips, b.tags);
+  return events.map((b) => {
+    const matching = clipsMatchingEvent(clips, b.tags);
     const excludedSet = new Set(b.excludedClipIds ?? []);
     const includedCount = matching.filter((c) => !excludedSet.has(c.id)).length;
-    const width = beatWidthFor(
+    const width = eventWidthFor(
       b,
       levels,
       levelValues,
@@ -814,7 +814,7 @@ function buildLayout(
       excludedSet.size
     );
     return {
-      beat: b,
+      event: b,
       x: b.x,
       y: b.y,
       width,
@@ -823,8 +823,8 @@ function buildLayout(
   });
 }
 
-const BeatCard = memo(function BeatCard({
-  beat,
+const EventCard = memo(function EventCard({
+  event,
   x,
   y,
   width,
@@ -833,7 +833,7 @@ const BeatCard = memo(function BeatCard({
   onEdit,
   onConnectStart,
 }: {
-  beat: BoardGroupNode;
+  event: BoardEventNode;
   x: number;
   y: number;
   width: number;
@@ -843,12 +843,12 @@ const BeatCard = memo(function BeatCard({
   onConnectStart: (e: React.PointerEvent, id: string) => void;
 }) {
   // Each subscription is scoped so pan/zoom or unrelated state changes don't
-  // re-render every beat card.
+  // re-render every event card.
   const clips = useStore((s) => s.clips);
   const levels = useStore((s) => s.levels);
   const levelValues = useStore((s) => s.levelValues);
   const openGroupModal = useStore((s) => s.openGroupModal);
-  const cloneBeat = useStore((s) => s.cloneBeat);
+  const cloneEvent = useStore((s) => s.cloneEvent);
   const updateBoardNode = useStore((s) => s.updateBoardNode);
   const pushBoardHistory = useStore((s) => s.pushBoardHistory);
   const suppressClickRef = useRef(false);
@@ -860,8 +860,8 @@ const BeatCard = memo(function BeatCard({
     if (target.closest("button")) return;
     const startClientX = e.clientX;
     const startClientY = e.clientY;
-    const startX = beat.x;
-    const startY = beat.y;
+    const startX = event.x;
+    const startY = event.y;
     // Capture zoom at drag-start — avoids needing it as a re-rendering prop.
     const startState = useStore.getState();
     const dragZoom =
@@ -876,7 +876,7 @@ const BeatCard = memo(function BeatCard({
         started = true;
         pushBoardHistory();
       }
-      updateBoardNode(beat.id, {
+      updateBoardNode(event.id, {
         x: snapToGrid(startX + dx),
         y: snapToGrid(startY + dy),
       });
@@ -904,20 +904,20 @@ const BeatCard = memo(function BeatCard({
   }
 
   const matching = useMemo(
-    () => clipsMatchingGroup(clips, beat.tags),
-    [clips, beat.tags]
+    () => clipsMatchingEvent(clips, event.tags),
+    [clips, event.tags]
   );
-  const excluded = new Set(beat.excludedClipIds ?? []);
+  const excluded = new Set(event.excludedClipIds ?? []);
   const included = matching.filter((c) => !excluded.has(c.id));
   const sorted = useMemo(
-    () => sortClips(included, beat.sort),
-    [included, beat.sort]
+    () => sortClips(included, event.sort),
+    [included, event.sort]
   );
 
   const tagChips = useMemo(() => {
-    if (!beat.tags) return [];
+    if (!event.tags) return [];
     const out: { levelName: string; valueName: string; color: string }[] = [];
-    for (const [lid, vids] of Object.entries(beat.tags)) {
+    for (const [lid, vids] of Object.entries(event.tags)) {
       const l = levels[lid];
       if (!l) continue;
       for (const vid of vids) {
@@ -927,13 +927,13 @@ const BeatCard = memo(function BeatCard({
       }
     }
     return out;
-  }, [beat.tags, levels, levelValues]);
+  }, [event.tags, levels, levelValues]);
 
   const VISIBLE_MAX = 40;
   const visible = sorted.slice(0, VISIBLE_MAX);
   const overflow = sorted.length - visible.length;
 
-  const hasFilter = !!(beat.tags && Object.keys(beat.tags).length > 0);
+  const hasFilter = !!(event.tags && Object.keys(event.tags).length > 0);
 
   return (
     <div
@@ -947,11 +947,11 @@ const BeatCard = memo(function BeatCard({
         left: x,
         top: y,
         width,
-        height: BEAT_HEIGHT,
+        height: EVENT_HEIGHT,
         contain: "layout style paint",
       }}
     >
-      {/* Header — drag handle for moving the beat */}
+      {/* Header — drag handle for moving the event */}
       <div
         className="flex items-center gap-1.5 px-3 py-2 border-b border-ink-800 bg-ink-850/80 cursor-grab active:cursor-grabbing select-none"
         onPointerDown={onHeaderPointerDown}
@@ -962,29 +962,29 @@ const BeatCard = memo(function BeatCard({
         </span>
         <div
           className="flex-1 text-sm font-medium text-ink-50 truncate cursor-pointer"
-          onClick={() => onEdit(beat.id)}
-          title={beat.label}
+          onClick={() => onEdit(event.id)}
+          title={event.label}
         >
-          {beat.label || "Untitled"}
+          {event.label || "Untitled"}
         </div>
         <button
-          onClick={() => cloneBeat(beat.id)}
+          onClick={() => cloneEvent(event.id)}
           className="size-6 rounded hover:bg-ink-800 text-ink-300 hover:text-ink-50 flex items-center justify-center"
           title="Clone (always adds as a child — branches)"
         >
           <Copy className="size-3.5" />
         </button>
         <button
-          onClick={() => onEdit(beat.id)}
+          onClick={() => onEdit(event.id)}
           className="size-6 rounded hover:bg-ink-800 text-ink-300 hover:text-ink-50 flex items-center justify-center"
-          title="Edit beat"
+          title="Edit event"
         >
           <Pencil className="size-3.5" />
         </button>
         <button
-          onClick={() => openGroupModal(beat.id)}
+          onClick={() => openGroupModal(event.id)}
           className="size-6 rounded hover:bg-ink-800 text-ink-300 hover:text-ink-50 flex items-center justify-center"
-          title="Open beat"
+          title="Open event"
         >
           <Expand className="size-3.5" />
         </button>
@@ -1018,7 +1018,7 @@ const BeatCard = memo(function BeatCard({
 
       <div
         className="flex-1 min-h-0 overflow-hidden p-2"
-        onClick={() => onEdit(beat.id)}
+        onClick={() => onEdit(event.id)}
       >
         {sorted.length === 0 ? (
           <div className="size-full rounded-lg border-2 border-dashed border-ink-800 flex items-center justify-center text-[11px] text-ink-500 px-3 text-center cursor-pointer">
@@ -1060,7 +1060,7 @@ const BeatCard = memo(function BeatCard({
       </div>
 
       {/* Connection dot on the right edge */}
-      <ConnectDot onPointerDown={(e) => onConnectStart(e, beat.id)} />
+      <ConnectDot onPointerDown={(e) => onConnectStart(e, event.id)} />
     </div>
   );
 });
@@ -1074,7 +1074,7 @@ function ConnectDot({
     <button
       onPointerDown={onPointerDown}
       onClick={(e) => e.stopPropagation()}
-      title="Drag onto another beat to connect"
+      title="Drag onto another event to connect"
       className="group absolute -right-3 top-1/2 -translate-y-1/2 size-6 rounded-full flex items-center justify-center cursor-crosshair"
     >
       <span className="size-2.5 rounded-full bg-ink-600 group-hover:size-4 group-hover:bg-accent-400 transition-all" />
@@ -1108,8 +1108,8 @@ function GraphArrows({
   onDisconnect,
   pendingConn,
 }: {
-  layout: BeatLayout[];
-  layoutById: Map<string, BeatLayout>;
+  layout: EventLayout[];
+  layoutById: Map<string, EventLayout>;
   selectedEdge: { from: string; to: string } | null;
   onSelectEdge: (e: { from: string; to: string }) => void;
   onDisconnect: (from: string, to: string) => void;
@@ -1118,9 +1118,9 @@ function GraphArrows({
   const VIEW = 40000;
 
   const edges = useMemo(() => {
-    const out: { from: BeatLayout; to: BeatLayout }[] = [];
+    const out: { from: EventLayout; to: EventLayout }[] = [];
     for (const l of layout) {
-      for (const nid of l.beat.nextIds ?? []) {
+      for (const nid of l.event.nextIds ?? []) {
         const target = layoutById.get(nid);
         if (target) out.push({ from: l, to: target });
       }
@@ -1138,7 +1138,7 @@ function GraphArrows({
     >
       <defs>
         <marker
-          id="beat-arrowhead"
+          id="event-arrowhead"
           markerWidth="12"
           markerHeight="12"
           refX="10"
@@ -1149,7 +1149,7 @@ function GraphArrows({
           <path d="M0,0 L0,12 L10,6 z" fill="#cbd5e1" />
         </marker>
         <marker
-          id="beat-arrowhead-selected"
+          id="event-arrowhead-selected"
           markerWidth="12"
           markerHeight="12"
           refX="10"
@@ -1160,7 +1160,7 @@ function GraphArrows({
           <path d="M0,0 L0,12 L10,6 z" fill="oklch(0.86 0.17 73)" />
         </marker>
         <marker
-          id="beat-arrowhead-draft"
+          id="event-arrowhead-draft"
           markerWidth="12"
           markerHeight="12"
           refX="10"
@@ -1173,8 +1173,8 @@ function GraphArrows({
       </defs>
 
       {edges.map(({ from, to }) => {
-        const fromRect = { x: from.x, y: from.y, w: from.width, h: BEAT_HEIGHT };
-        const toRect = { x: to.x, y: to.y, w: to.width, h: BEAT_HEIGHT };
+        const fromRect = { x: from.x, y: from.y, w: from.width, h: EVENT_HEIGHT };
+        const toRect = { x: to.x, y: to.y, w: to.width, h: EVENT_HEIGHT };
         const fromCenter = {
           x: fromRect.x + fromRect.w / 2,
           y: fromRect.y + fromRect.h / 2,
@@ -1186,7 +1186,7 @@ function GraphArrows({
         const p1 = rectEdgePoint(fromRect, toCenter.x, toCenter.y);
         const p2 = rectEdgePoint(toRect, fromCenter.x, fromCenter.y);
         const isSelected =
-          selectedEdge?.from === from.beat.id && selectedEdge?.to === to.beat.id;
+          selectedEdge?.from === from.event.id && selectedEdge?.to === to.event.id;
 
         // Bezier control points pull horizontally for a smooth flowchart curve.
         const dx = Math.max(40, Math.abs(p2.x - p1.x) * 0.4);
@@ -1201,11 +1201,11 @@ function GraphArrows({
 
         return (
           <g
-            key={`${from.beat.id}-${to.beat.id}`}
+            key={`${from.event.id}-${to.event.id}`}
             style={{ pointerEvents: "auto", cursor: "pointer" }}
             onClick={(e) => {
               e.stopPropagation();
-              onSelectEdge({ from: from.beat.id, to: to.beat.id });
+              onSelectEdge({ from: from.event.id, to: to.event.id });
             }}
           >
             <path
@@ -1220,7 +1220,7 @@ function GraphArrows({
               stroke={isSelected ? "oklch(0.86 0.17 73)" : "#cbd5e1"}
               strokeWidth={isSelected ? 2.4 : 1.6}
               markerEnd={`url(#${
-                isSelected ? "beat-arrowhead-selected" : "beat-arrowhead"
+                isSelected ? "event-arrowhead-selected" : "event-arrowhead"
               })`}
               vectorEffect="non-scaling-stroke"
             />
@@ -1230,7 +1230,7 @@ function GraphArrows({
                 style={{ cursor: "pointer" }}
                 onClick={(e) => {
                   e.stopPropagation();
-                  onDisconnect(from.beat.id, to.beat.id);
+                  onDisconnect(from.event.id, to.event.id);
                 }}
               >
                 <circle
@@ -1258,7 +1258,7 @@ function GraphArrows({
           x: source.x,
           y: source.y,
           w: source.width,
-          h: BEAT_HEIGHT,
+          h: EVENT_HEIGHT,
         };
         const p1 = rectEdgePoint(
           sourceRect,
@@ -1280,7 +1280,7 @@ function GraphArrows({
             stroke="oklch(0.84 0.16 73)"
             strokeWidth={1.6}
             strokeDasharray="5 4"
-            markerEnd="url(#beat-arrowhead-draft)"
+            markerEnd="url(#event-arrowhead-draft)"
             vectorEffect="non-scaling-stroke"
             style={{ pointerEvents: "none" }}
           />
@@ -1361,7 +1361,7 @@ function ResolveExportDialog({
 
         <div className="px-5 py-4 space-y-4">
           <div className="grid grid-cols-3 gap-3 text-center">
-            <Stat label="Beats" value={summary.beats.toString()} />
+            <Stat label="Events" value={summary.events.toString()} />
             <Stat
               label="Clips"
               value={summary.uniqueClips.toString()}
@@ -1372,9 +1372,9 @@ function ResolveExportDialog({
               }
             />
             <Stat
-              label="Empty beats"
-              value={summary.emptyBeats.toString()}
-              tone={summary.emptyBeats > 0 ? "muted" : undefined}
+              label="Empty events"
+              value={summary.emptyEvents.toString()}
+              tone={summary.emptyEvents > 0 ? "muted" : undefined}
             />
           </div>
 
@@ -1455,8 +1455,8 @@ function ResolveExportDialog({
           )}
 
           <div className="text-[12px] text-ink-400 leading-snug">
-            The script picks a folder, imports clips, and fills each beat-bin.
-            Safe to re-run; clips shared by multiple beats get a copy per bin.
+            The script picks a folder, imports clips, and fills each event-bin.
+            Safe to re-run; clips shared by multiple events get a copy per bin.
           </div>
         </div>
 
@@ -1514,7 +1514,7 @@ function FcpxmlExportDialog({
 
         <div className="px-5 py-4 space-y-4">
           <div className="grid grid-cols-3 gap-3 text-center">
-            <Stat label="Beats" value={summary.beats.toString()} />
+            <Stat label="Events" value={summary.events.toString()} />
             <Stat
               label="Clips"
               value={summary.uniqueClips.toString()}
@@ -1525,9 +1525,9 @@ function FcpxmlExportDialog({
               }
             />
             <Stat
-              label="Empty beats"
-              value={summary.emptyBeats.toString()}
-              tone={summary.emptyBeats > 0 ? "muted" : undefined}
+              label="Empty events"
+              value={summary.emptyEvents.toString()}
+              tone={summary.emptyEvents > 0 ? "muted" : undefined}
             />
           </div>
 
@@ -1538,7 +1538,7 @@ function FcpxmlExportDialog({
               . Choose a library to import into.
             </li>
             <li>
-              FCP creates one <strong>Event</strong> per beat. Clips appear
+              FCP creates one <strong>Event</strong> per event. Clips appear
               <em> Missing</em> because the file references aren't linked yet.
             </li>
             <li>
@@ -1547,6 +1547,17 @@ function FcpxmlExportDialog({
               filename + UID across every event.
             </li>
           </ol>
+
+          {summary.missingFpsCount > 0 && (
+            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-200 leading-snug">
+              <strong>{summary.missingFpsCount}</strong> of {summary.uniqueClips}{" "}
+              clips don't have a detected frame rate yet — they'll default to
+              30 fps in the FCPXML. FCP will refuse to relink them if the real
+              file's fps is different (24, 50, 60, etc.). Browse those clips in
+              the grid (or wait for thumbs to fill in) to backfill fps, then
+              re-export.
+            </div>
+          )}
 
           <div className="text-[12px] text-ink-400 leading-snug">
             Shared clips appear naturally in every matching event — no

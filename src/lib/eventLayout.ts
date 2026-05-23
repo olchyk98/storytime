@@ -1,14 +1,14 @@
 import type {
-  BoardGroupNode,
+  BoardEventNode,
   Clip,
   Level,
   LevelValue,
 } from "../types";
-import { clipsMatchingGroup } from "./beatFilter";
+import { clipsMatchingEvent } from "./eventFilter";
 
-export const BEAT_MIN_WIDTH = 280;
-export const BEAT_MAX_WIDTH = 540;
-export const BEAT_HEIGHT = 220;
+export const EVENT_MIN_WIDTH = 280;
+export const EVENT_MAX_WIDTH = 540;
+export const EVENT_HEIGHT = 220;
 export const GAP_X = 80;
 export const GAP_Y = 56;
 export const PADDING = 60;
@@ -53,14 +53,14 @@ function countAreaWidth(includedCount: number, excludedCount: number): number {
 }
 
 function chipsRowWidth(
-  beat: BoardGroupNode,
+  event: BoardEventNode,
   levels: Record<string, Level>,
   levelValues: Record<string, LevelValue>,
   countArea: number
 ): number {
-  if (!beat.tags) return 0;
+  if (!event.tags) return 0;
   const names: string[] = [];
-  for (const [lid, vids] of Object.entries(beat.tags)) {
+  for (const [lid, vids] of Object.entries(event.tags)) {
     if (!levels[lid]) continue;
     for (const vid of vids) {
       const v = levelValues[vid];
@@ -74,57 +74,57 @@ function chipsRowWidth(
   return chipsTotal + gaps + containerPadding + countArea;
 }
 
-export function beatWidthFor(
-  beat: BoardGroupNode,
+export function eventWidthFor(
+  event: BoardEventNode,
   levels: Record<string, Level>,
   levelValues: Record<string, LevelValue>,
   includedCount: number,
   excludedCount: number
 ): number {
-  const labelWidth = measureLabelWidth(beat.label ?? "");
+  const labelWidth = measureLabelWidth(event.label ?? "");
   const labelBasedWidth = HEADER_CHROME_WIDTH + labelWidth + LABEL_PADDING;
   const countArea = countAreaWidth(includedCount, excludedCount);
-  const chipBased = chipsRowWidth(beat, levels, levelValues, countArea);
+  const chipBased = chipsRowWidth(event, levels, levelValues, countArea);
   const desired = Math.max(labelBasedWidth, chipBased);
   return Math.min(
-    BEAT_MAX_WIDTH,
-    Math.max(BEAT_MIN_WIDTH, Math.ceil(desired))
+    EVENT_MAX_WIDTH,
+    Math.max(EVENT_MIN_WIDTH, Math.ceil(desired))
   );
 }
 
-export interface BeatPosition {
-  beat: BoardGroupNode;
+export interface EventPosition {
+  event: BoardEventNode;
   x: number;
   y: number;
   width: number;
 }
 
 // One-shot auto-DAG layout used for the manual-positions migration. After
-// migration runs, each beat's stored (x, y) drives rendering directly.
+// migration runs, each event's stored (x, y) drives rendering directly.
 export function computeAutoLayout(
-  beats: BoardGroupNode[],
+  events: BoardEventNode[],
   levels: Record<string, Level>,
   levelValues: Record<string, LevelValue>,
   clips: Record<string, Clip>
-): BeatPosition[] {
-  if (beats.length === 0) return [];
+): EventPosition[] {
+  if (events.length === 0) return [];
   const parents = new Map<string, string[]>();
-  for (const b of beats) parents.set(b.id, []);
-  for (const b of beats) {
+  for (const b of events) parents.set(b.id, []);
+  for (const b of events) {
     for (const nid of b.nextIds ?? []) {
       if (parents.has(nid)) parents.get(nid)!.push(b.id);
     }
   }
 
   const ranks = new Map<string, number>();
-  for (const b of beats) ranks.set(b.id, 0);
+  for (const b of events) ranks.set(b.id, 0);
   let changed = true;
   let iterations = 0;
-  const maxIter = beats.length + 2;
+  const maxIter = events.length + 2;
   while (changed && iterations < maxIter) {
     changed = false;
     iterations++;
-    for (const b of beats) {
+    for (const b of events) {
       const ps = parents.get(b.id) ?? [];
       const newRank =
         ps.length === 0
@@ -137,8 +137,8 @@ export function computeAutoLayout(
     }
   }
 
-  const byRank = new Map<number, BoardGroupNode[]>();
-  for (const b of beats) {
+  const byRank = new Map<number, BoardEventNode[]>();
+  for (const b of events) {
     const r = ranks.get(b.id) ?? 0;
     if (!byRank.has(r)) byRank.set(r, []);
     byRank.get(r)!.push(b);
@@ -152,21 +152,21 @@ export function computeAutoLayout(
     });
   }
 
-  const widthByBeatId = new Map<string, number>();
-  function widthOf(b: BoardGroupNode): number {
-    const cached = widthByBeatId.get(b.id);
+  const widthByEventId = new Map<string, number>();
+  function widthOf(b: BoardEventNode): number {
+    const cached = widthByEventId.get(b.id);
     if (cached !== undefined) return cached;
-    const matching = clipsMatchingGroup(clips, b.tags);
+    const matching = clipsMatchingEvent(clips, b.tags);
     const excludedSet = new Set(b.excludedClipIds ?? []);
     const included = matching.filter((c) => !excludedSet.has(c.id));
-    const w = beatWidthFor(
+    const w = eventWidthFor(
       b,
       levels,
       levelValues,
       included.length,
       excludedSet.size
     );
-    widthByBeatId.set(b.id, w);
+    widthByEventId.set(b.id, w);
     return w;
   }
 
@@ -183,15 +183,15 @@ export function computeAutoLayout(
     x += colWidthByRank.get(r)! + GAP_X;
   }
 
-  const out: BeatPosition[] = [];
+  const out: EventPosition[] = [];
   for (const r of sortedRanks) {
     const arr = byRank.get(r)!;
     const cx = colXByRank.get(r)!;
     arr.forEach((b, i) => {
       out.push({
-        beat: b,
+        event: b,
         x: cx,
-        y: PADDING + i * (BEAT_HEIGHT + GAP_Y),
+        y: PADDING + i * (EVENT_HEIGHT + GAP_Y),
         width: widthOf(b),
       });
     });

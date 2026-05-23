@@ -3,7 +3,7 @@ import clsx from "clsx";
 import { Trash2 } from "lucide-react";
 import type { BoardAnnotationNode } from "../../types";
 import { useStore } from "../../state/store";
-import { snapToGrid } from "../../lib/beatLayout";
+import { snapToGrid } from "../../lib/eventLayout";
 
 interface Props {
   node: BoardAnnotationNode;

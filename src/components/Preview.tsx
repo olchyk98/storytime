@@ -26,6 +26,7 @@ export function Preview() {
     levelValues,
     tagClips,
     addValue,
+    setClipFps,
   } = useStore();
   const containerRef = useRef<HTMLDivElement>(null);
   const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
@@ -53,6 +54,47 @@ export function Preview() {
       if (url) URL.revokeObjectURL(url);
     };
   }, [clip?.id]);
+
+  // Backfill fps for the currently previewed clip if we haven't measured it
+  // yet. Uses requestVideoFrameCallback on the already-loaded video element,
+  // so it's effectively free.
+  useEffect(() => {
+    if (!clip || !videoEl) return;
+    if (clip.fps !== undefined) return;
+    type FrameMeta = { mediaTime: number };
+    type Cb = (now: number, meta: FrameMeta) => void;
+    const v = videoEl as HTMLVideoElement & {
+      requestVideoFrameCallback?: (cb: Cb) => number;
+      cancelVideoFrameCallback?: (id: number) => void;
+    };
+    if (typeof v.requestVideoFrameCallback !== "function") return;
+    let cancelled = false;
+    const times: number[] = [];
+    const cb: Cb = (_now, meta) => {
+      if (cancelled) return;
+      times.push(meta.mediaTime);
+      if (times.length < 6) {
+        v.requestVideoFrameCallback!(cb);
+        return;
+      }
+      const intervals: number[] = [];
+      for (let i = 1; i < times.length; i++) {
+        const d = times[i] - times[i - 1];
+        if (d > 0.001 && d < 1) intervals.push(d);
+      }
+      if (intervals.length === 0) return;
+      intervals.sort((a, b) => a - b);
+      const median = intervals[Math.floor(intervals.length / 2)];
+      const fps = 1 / median;
+      if (fps >= 5 && fps <= 300) {
+        setClipFps(clip.id, fps);
+      }
+    };
+    v.requestVideoFrameCallback!(cb);
+    return () => {
+      cancelled = true;
+    };
+  }, [clip?.id, clip?.fps, videoEl, setClipFps]);
 
   useEffect(() => {
     if (!clip) return;
@@ -165,7 +207,12 @@ function PreviewSidebar({
   onTag,
   onCreate,
 }: {
-  clip: { id: string; path: string[]; tags?: Record<string, string> };
+  clip: {
+    id: string;
+    path: string[];
+    tags?: Record<string, string>;
+    fps?: number;
+  };
   levels: Record<string, { id: string; name: string; order: number }>;
   levelValues: Record<
     string,
@@ -181,6 +228,22 @@ function PreviewSidebar({
 
   return (
     <aside className="border-l border-ink-800 bg-ink-900/60 overflow-y-auto p-5 space-y-5">
+      <div>
+        <div className="text-[10px] uppercase tracking-[0.15em] text-ink-400 mb-1">
+          Frame rate
+        </div>
+        <div className="font-mono text-sm text-ink-50">
+          {clip.fps !== undefined ? (
+            <>
+              {clip.fps.toFixed(2).replace(/\.?0+$/, "")}{" "}
+              <span className="text-ink-400">fps</span>
+            </>
+          ) : (
+            <span className="text-ink-500">unknown</span>
+          )}
+        </div>
+      </div>
+
       <div>
         <div className="text-[10px] uppercase tracking-[0.15em] text-ink-400 mb-2">
           Tags

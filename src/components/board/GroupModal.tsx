@@ -11,11 +11,11 @@ import {
 } from "lucide-react";
 import { useStore } from "../../state/store";
 import { ClipCard } from "../ClipCard";
-import { clipsMatchingGroup, sortClips } from "../../lib/beatFilter";
-import type { BoardGroupSort } from "../../types";
+import { clipsMatchingEvent, sortClips } from "../../lib/eventFilter";
+import type { BoardEventSort } from "../../types";
 
 const SORT_OPTIONS: {
-  key: BoardGroupSort;
+  key: BoardEventSort;
   label: string;
   icon: typeof ArrowDownAZ;
 }[] = [
@@ -41,13 +41,13 @@ export function GroupModal() {
 
   const node = groupModalId ? boardNodes[groupModalId] : null;
 
-  const groupSort: BoardGroupSort =
-    (node?.kind === "group" ? node.sort : undefined) ?? "name-asc";
+  const groupSort: BoardEventSort =
+    (node?.kind === "event" ? node.sort : undefined) ?? "name-asc";
 
   const groupClips = useMemo(() => {
-    if (!node || node.kind !== "group") return [];
+    if (!node || node.kind !== "event") return [];
     const excluded = new Set(node.excludedClipIds ?? []);
-    const matches = clipsMatchingGroup(clips, node.tags).filter(
+    const matches = clipsMatchingEvent(clips, node.tags).filter(
       (c) => !excluded.has(c.id)
     );
     return sortClips(matches, node.sort);
@@ -71,7 +71,7 @@ export function GroupModal() {
   }, [closeGroupModal]);
 
   const tagChips = useMemo(() => {
-    if (!node || node.kind !== "group" || !node.tags) return [];
+    if (!node || node.kind !== "event" || !node.tags) return [];
     const out: { levelName: string; valueName: string; color: string }[] = [];
     for (const [lid, vids] of Object.entries(node.tags)) {
       const l = levels[lid];
@@ -85,16 +85,16 @@ export function GroupModal() {
     return out;
   }, [node, levels, levelValues]);
 
-  if (!node || node.kind !== "group") return null;
+  if (!node || node.kind !== "event") return null;
 
   return (
     <div className="fixed inset-0 z-40 bg-ink-950/85 backdrop-blur-sm flex flex-col fade-in">
       <header className="px-5 py-3 border-b border-ink-800 flex items-center gap-3">
         <div className="flex-1 min-w-0">
-          <div className="text-xs uppercase tracking-wider text-ink-400">Beat</div>
+          <div className="text-xs uppercase tracking-wider text-ink-400">Event</div>
           <div className="flex items-center gap-2">
             <div className="font-medium text-ink-50 truncate">
-              {node.label ?? "Untitled beat"}
+              {node.label ?? "Untitled event"}
             </div>
             {tagChips.map((t, i) => (
               <span
@@ -137,7 +137,7 @@ export function GroupModal() {
                     <button
                       key={o.key}
                       onClick={() => {
-                        if (node && node.kind === "group" && o.key !== groupSort) {
+                        if (node && node.kind === "event" && o.key !== groupSort) {
                           pushBoardHistory();
                           updateBoardNode(node.id, { sort: o.key });
                         }

@@ -7,10 +7,10 @@ import {
   CalendarArrowUp,
   Check,
 } from "lucide-react";
-import type { BoardGroupSort } from "../../types";
+import type { BoardEventSort } from "../../types";
 
 const OPTIONS: {
-  key: BoardGroupSort;
+  key: BoardEventSort;
   label: string;
   icon: typeof ArrowDownAZ;
 }[] = [
@@ -25,8 +25,8 @@ export function GroupSortMenu({
   onChange,
   compact = false,
 }: {
-  value: BoardGroupSort;
-  onChange: (v: BoardGroupSort) => void;
+  value: BoardEventSort;
+  onChange: (v: BoardEventSort) => void;
   compact?: boolean;
 }) {
   const [open, setOpen] = useState(false);

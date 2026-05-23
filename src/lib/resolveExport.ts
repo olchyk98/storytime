@@ -1,11 +1,11 @@
-import type { BoardGroupNode, Clip } from "../types";
-import { clipsMatchingGroup } from "./beatFilter";
+import type { BoardEventNode, Clip } from "../types";
+import { clipsMatchingEvent } from "./eventFilter";
 
 export interface ResolveExportSummary {
-  beats: number;
+  events: number;
   uniqueClips: number;
   totalRefs: number;
-  emptyBeats: number;
+  emptyEvents: number;
 }
 
 export interface ResolveExportResult {
@@ -20,46 +20,46 @@ function pyString(s: string): string {
 /**
  * Generates a Python script for DaVinci Resolve's Console (Workspace → Console
  * → Py3 tab). The script walks the current project's Media Pool, creates a
- * sub-folder per beat, and moves clips into bins by matching filenames.
+ * sub-folder per event, and moves clips into bins by matching filenames.
  *
  * We use the Python API because Resolve's xmeml/FCPXML importers don't
  * actually create bins — they only import sequences. Scripting is the only
- * reliable path for "drop your beats into Resolve and have bins appear."
+ * reliable path for "drop your events into Resolve and have bins appear."
  */
 export function generateResolveScript(opts: {
-  beats: BoardGroupNode[];
+  events: BoardEventNode[];
   clips: Record<string, Clip>;
   projectName: string;
 }): ResolveExportResult {
-  const { beats, clips, projectName } = opts;
+  const { events, clips, projectName } = opts;
 
-  const sortedBeats = [...beats].sort(
+  const sortedEvents = [...events].sort(
     (a, b) => (a.order ?? 0) - (b.order ?? 0)
   );
 
-  const beatBuckets = sortedBeats.map((b) => {
-    const matching = clipsMatchingGroup(clips, b.tags);
+  const eventBuckets = sortedEvents.map((b) => {
+    const matching = clipsMatchingEvent(clips, b.tags);
     const excluded = new Set(b.excludedClipIds ?? []);
-    return { beat: b, clips: matching.filter((c) => !excluded.has(c.id)) };
+    return { event: b, clips: matching.filter((c) => !excluded.has(c.id)) };
   });
 
   const usedClipIds = new Set<string>();
   let uniqueClips = 0;
   let totalRefs = 0;
-  let emptyBeats = 0;
+  let emptyEvents = 0;
 
-  const beatLiterals: string[] = [];
-  for (const { beat, clips: bClips } of beatBuckets) {
-    if (bClips.length === 0) {
-      emptyBeats++;
-      // Still emit empty beats so the user sees an empty bin (placeholder).
-      beatLiterals.push(
-        `    {"name": ${pyString(beat.label ?? "Untitled beat")}, "clips": []},`
+  const eventLiterals: string[] = [];
+  for (const { event, clips: eClips } of eventBuckets) {
+    if (eClips.length === 0) {
+      emptyEvents++;
+      // Still emit empty events so the user sees an empty bin (placeholder).
+      eventLiterals.push(
+        `    {"name": ${pyString(event.label ?? "Untitled event")}, "clips": []},`
       );
       continue;
     }
     const clipNames: string[] = [];
-    for (const c of bClips) {
+    for (const c of eClips) {
       totalRefs++;
       if (!usedClipIds.has(c.id)) {
         usedClipIds.add(c.id);
@@ -67,12 +67,12 @@ export function generateResolveScript(opts: {
       }
       clipNames.push(pyString(c.name));
     }
-    beatLiterals.push(
-      `    {"name": ${pyString(beat.label ?? "Untitled beat")}, "clips": [${clipNames.join(", ")}]},`
+    eventLiterals.push(
+      `    {"name": ${pyString(event.label ?? "Untitled event")}, "clips": [${clipNames.join(", ")}]},`
     );
   }
 
-  const beatsData = beatLiterals.join("\n");
+  const eventsData = eventLiterals.join("\n");
   const safeProjectName = pyString(projectName || "storytime");
   const exportedAt = new Date().toISOString();
 
@@ -82,11 +82,11 @@ export function generateResolveScript(opts: {
 #
 # WHAT IT DOES
 #   1. Pops up a folder picker — point at your project folder on disk.
-#   2. For each beat: creates a bin and imports that beat's clips directly
-#      into it. A clip used by N beats becomes N MediaPoolItems (one per bin),
+#   2. For each event: creates a bin and imports that event's clips directly
+#      into it. A clip used by N events becomes N MediaPoolItems (one per bin),
 #      all pointing at the same disk file. This is the only way to have a
 #      clip "live in" multiple bins simultaneously in Resolve.
-#   3. Re-runs are idempotent: clips already in a beat's bin are skipped.
+#   3. Re-runs are idempotent: clips already in a event's bin are skipped.
 #
 # TWO WAYS TO RUN
 #   A. PASTE IN CONSOLE  (Studio AND free)
@@ -129,8 +129,8 @@ _mp = _project.GetMediaPool()
 _root = _mp.GetRootFolder()
 
 PROJECT_NAME = ${safeProjectName}
-BEATS = [
-${beatsData}
+EVENTS = [
+${eventsData}
 ]
 
 # === Step 1: pick the project folder and import any new files ===
@@ -197,15 +197,15 @@ def _bin_contents(b):
     return out
 
 print(f"Storytime → {PROJECT_NAME}")
-print("Pick your project folder on disk. Each beat will import its own copy")
-print("of any shared clips, so a clip used in N beats appears in N bins.")
+print("Pick your project folder on disk. Each event will import its own copy")
+print("of any shared clips, so a clip used in N events appears in N bins.")
 
 _folder = FOLDER_OVERRIDE or _pick_folder()
 if not _folder or not os.path.isdir(_folder):
     if FOLDER_OVERRIDE and not os.path.isdir(FOLDER_OVERRIDE):
         print(f"  ! FOLDER_OVERRIDE path doesn't exist: {FOLDER_OVERRIDE!r}")
     print("No folder selected — aborting. (This script needs disk access to copy")
-    print("clips into per-beat bins.)")
+    print("clips into per-event bins.)")
     sys.exit(0)
 
 print(f"  Folder: {_folder}")
@@ -224,7 +224,7 @@ for _p in _disk:
         _disk_index.setdefault(_stem, _p)
         _disk_index.setdefault(_stem.lower(), _p)
 
-print(f"Creating {len(BEATS)} beat bins (duplicate references across beats)...")
+print(f"Creating {len(EVENTS)} event bins (duplicate references across events)...")
 print()
 
 _existing_bins = {f.GetName(): f for f in _root.GetSubFolderList()}
@@ -232,14 +232,14 @@ _total_imported = 0
 _total_already = 0
 _total_missing = 0
 
-for _beat in BEATS:
-    _name = _beat["name"]
-    _files = _beat["clips"]
+for _event in EVENTS:
+    _name = _event["name"]
+    _files = _event["clips"]
     _bin = _existing_bins.get(_name) or _mp.AddSubFolder(_root, _name)
     if not _bin:
         print(f"  ! Could not create bin: {_name}")
         continue
-    _existing_bins[_name] = _bin  # cache so two beats with the same label share a bin
+    _existing_bins[_name] = _bin  # cache so two events with the same label share a bin
 
     _have = _bin_contents(_bin)
     _to_import = []
@@ -298,7 +298,7 @@ for _beat in BEATS:
         print(f"      · ... and {len(_missing) - 3} more")
 
 print()
-print(f"Done. {_total_imported} clips imported across {len(BEATS)} bins.")
+print(f"Done. {_total_imported} clips imported across {len(EVENTS)} bins.")
 if _total_already:
     print(f"{_total_already} clips were already in their bins (skipped).")
 if _total_missing:
@@ -308,10 +308,10 @@ if _total_missing:
   return {
     script,
     summary: {
-      beats: sortedBeats.length,
+      events: sortedEvents.length,
       uniqueClips,
       totalRefs,
-      emptyBeats,
+      emptyEvents,
     },
   };
 }
@@ -325,7 +325,7 @@ export function downloadResolveScript(
   const a = document.createElement("a");
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   const proj = (projectName || "storytime").replace(/[^a-z0-9-_]+/gi, "-");
-  const filename = `${proj}-beats-${stamp}.py`;
+  const filename = `${proj}-events-${stamp}.py`;
   a.href = url;
   a.download = filename;
   document.body.appendChild(a);

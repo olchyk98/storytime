@@ -4,7 +4,8 @@ import { useStore } from "../state/store";
 import { fmtBytes } from "../lib/format";
 
 export function Topbar() {
-  const { clips, scan, viewMode, setViewMode, ensureBoard } = useStore();
+  const { clips, scan, extraction, viewMode, setViewMode, ensureBoard } =
+    useStore();
   const captured = Object.keys(clips).length;
   const totalSize = Object.values(clips).reduce((s, c) => s + c.size, 0);
 
@@ -26,7 +27,7 @@ export function Topbar() {
           active={viewMode === "board"}
           onClick={switchToBoard}
           icon={<Workflow className="size-3.5" />}
-          label="Beats"
+          label="Events"
         />
       </div>
 
@@ -35,9 +36,9 @@ export function Topbar() {
       <Pill label="clips" value={captured.toString()} />
       <Pill label="total" value={fmtBytes(totalSize)} />
       <div className="flex-1" />
-      <div className="flex items-center gap-2 text-[11px] text-ink-400 min-w-0">
+      <div className="flex items-center gap-3 text-[11px] text-ink-400 min-w-0">
         {scan.active && (
-          <>
+          <div className="flex items-center gap-2">
             <Loader2 className="size-3.5 animate-spin" />
             <span>scanning · {scan.count} found</span>
             {scan.current && (
@@ -45,7 +46,30 @@ export function Topbar() {
                 {scan.current}
               </span>
             )}
-          </>
+          </div>
+        )}
+        {extraction.active && (
+          <div
+            className="flex items-center gap-2"
+            title="Extracting thumbnails and frame rate"
+          >
+            <Loader2 className="size-3.5 animate-spin" />
+            <span>
+              extracting · {extraction.done}/{extraction.total}
+            </span>
+            <div className="h-1 w-24 rounded-full bg-ink-800 overflow-hidden">
+              <div
+                className="h-full bg-accent-400 transition-[width] duration-200"
+                style={{
+                  width: `${
+                    extraction.total > 0
+                      ? Math.round((extraction.done / extraction.total) * 100)
+                      : 0
+                  }%`,
+                }}
+              />
+            </div>
+          </div>
         )}
       </div>
     </div>

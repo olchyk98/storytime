@@ -12,20 +12,20 @@ const TOOLS: {
   {
     key: "select",
     label: "Select",
-    hint: "Move and edit beats",
+    hint: "Move and edit events",
     shortcut: "V",
     icon: MousePointer2,
   },
   {
     key: "annotation",
     label: "Annotation",
-    hint: "Drag to draw a labeled region around beats",
+    hint: "Drag to draw a labeled region around events",
     shortcut: "A",
     icon: SquareDashedKanban,
   },
 ];
 
-export function BeatsToolbar() {
+export function EventsToolbar() {
   const { boardTool, setBoardTool } = useStore();
   return (
     <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1 p-1 rounded-xl bg-ink-850/90 backdrop-blur border border-ink-700 shadow-xl shadow-ink-950/60">
